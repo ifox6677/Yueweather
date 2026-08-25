@@ -1,4 +1,4 @@
-# Cirrus Weather（Compose 新版）
+# Yue Weather（Compose 新版）
 
 一款开源的 Android 天气应用，支持全球任意地点的天气预报与降雨雷达。本版本在原
 [RadarWeather / Privacy Friendly Weather](https://github.com/SecUSo/privacy-friendly-weather)
