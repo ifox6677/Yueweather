@@ -1,22 +1,21 @@
 package org.zhangjq0908.weather.ui.viewPager;
 
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.fragment.app.FragmentManager;
 import androidx.lifecycle.Lifecycle;
 import androidx.viewpager2.adapter.FragmentStateAdapter;
-import androidx.work.Data;
-import androidx.work.OneTimeWorkRequest;
-import androidx.work.WorkManager;
 
 import org.zhangjq0908.weather.database.CityToWatch;
 import org.zhangjq0908.weather.database.CurrentWeatherData;
 import org.zhangjq0908.weather.database.HourlyForecast;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.database.WeekForecast;
-import org.zhangjq0908.weather.services.UpdateDataService;
-import org.zhangjq0908.weather.ui.WeatherCityFragment;
+import org.zhangjq0908.weather.services.WeatherUpdateWorker;
+import androidx.fragment.app.Fragment;
+import org.zhangjq0908.weather.ui.compose.WeatherCityComposeFragment;
 import org.zhangjq0908.weather.ui.updater.IUpdateableCityUI;
 
 import java.util.Collections;
@@ -45,16 +44,16 @@ public class WeatherPagerAdapter extends FragmentStateAdapter implements IUpdate
 
     public void loadCities() {
         this.cities = database.getAllCitiesToWatch();
-        Collections.sort(cities, (o1, o2) -> o1.getRank() - o2.getRank());
+        Collections.sort(cities, (o1, o2) -> Integer.compare(o1.getRank(), o2.getRank()));
     }
 
     @NonNull
     @Override
-    public WeatherCityFragment createFragment(int position) {
+    public Fragment createFragment(int position) {
         Bundle args = new Bundle();
         args.putInt("city_id", cities.get(position).getCityId());
 
-        return WeatherCityFragment.newInstance(args);
+        return WeatherCityComposeFragment.newInstance(args);
     }
 
     @Override
@@ -67,17 +66,7 @@ public class WeatherPagerAdapter extends FragmentStateAdapter implements IUpdate
     }
 
     public static void refreshSingleData(Context context, Boolean asap, int cityId) {
-        Data inputData = new Data.Builder()
-                .putString(UpdateDataService.ACTION, UpdateDataService.UPDATE_SINGLE_ACTION)
-                .putBoolean(UpdateDataService.SKIP_UPDATE_INTERVAL, asap)
-                .putInt(UpdateDataService.CITY_ID, cityId)
-                .build();
-
-        OneTimeWorkRequest workRequest = new OneTimeWorkRequest.Builder(UpdateDataService.class)
-                .setInputData(inputData)
-                .build();
-
-        WorkManager.getInstance(context).enqueue(workRequest);
+        WeatherUpdateWorker.enqueueCityUpdate(context, cityId);
     }
 
 

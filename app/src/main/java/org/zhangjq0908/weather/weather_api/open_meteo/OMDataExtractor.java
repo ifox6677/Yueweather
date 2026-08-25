@@ -1,10 +1,5 @@
 package org.zhangjq0908.weather.weather_api.open_meteo;
 
-import android.content.Context;
-import android.content.SharedPreferences;
-
-import androidx.preference.PreferenceManager;
-
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -23,9 +18,10 @@ import java.util.List;
  */
 public class OMDataExtractor implements IDataExtractor {
 
-    private Context context;
-    public OMDataExtractor(Context context) {
-        this.context = context;
+    private final boolean snowMode;
+
+    public OMDataExtractor(boolean snowMode) {
+        this.snowMode = snowMode;
     }
 
     @Override
@@ -35,7 +31,8 @@ public class OMDataExtractor implements IDataExtractor {
             CurrentWeatherData weatherData = new CurrentWeatherData();
             weatherData.setTimestamp(System.currentTimeMillis() / 1000);
             IApiToDatabaseConversion conversion = new OMToDatabaseConversion();
-            if (jsonData.has("weathercode")) weatherData.setWeatherID(conversion.convertWeatherCategory(jsonData.getString("weathercode")));
+            //optInt coerces both numeric and string values; unknown codes fall back to WeatherCategories.ERROR
+            if (jsonData.has("weathercode")) weatherData.setWeatherID(conversion.convertWeatherCategory(String.valueOf(jsonData.optInt("weathercode", -999))));
             if (jsonData.has("temperature")) weatherData.setTemperatureCurrent((float) jsonData.getDouble("temperature"));
             if (jsonData.has("windspeed")) weatherData.setWindSpeed((float) jsonData.getDouble("windspeed"));
             if (jsonData.has("winddirection")) weatherData.setWindDirection((float) jsonData.getDouble("winddirection"));
@@ -56,8 +53,6 @@ public class OMDataExtractor implements IDataExtractor {
     @Override
     public List<WeekForecast> extractWeekForecast(String data) {
         try {
-            SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context);
-
             List<WeekForecast> weekforecasts = new ArrayList<>();
             JSONObject jsonData = new JSONObject(data);
             JSONArray timeArray = jsonData.getJSONArray("time");
@@ -95,7 +90,7 @@ public class OMDataExtractor implements IDataExtractor {
                 if (uvIndexArray != null && !uvIndexArray.isNull(i)) {
                     weekForecast.setUv_index((float) uvIndexArray.getDouble(i));
                 } else weekForecast.setUv_index(-1);
-                if (prefManager.getBoolean("pref_snow", false)) {
+                if (snowMode) {
                     float precipitationAmount=0;
                     if (snowfallArray != null && !snowfallArray.isNull(i)) precipitationAmount += (float) snowfallArray.getDouble(i)*10;  //snowfall is reported in cm instead of mm
                     if (rainArray != null && !rainArray.isNull(i)) precipitationAmount += (float) rainArray.getDouble(i);
@@ -120,8 +115,6 @@ public class OMDataExtractor implements IDataExtractor {
     @Override
     public List<HourlyForecast> extractHourlyForecast(String data) {
         try {
-            SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context);
-
             List<HourlyForecast> hourlyForecasts = new ArrayList<>();
             JSONObject jsonData = new JSONObject(data);
             JSONArray timeArray = jsonData.getJSONArray("time");
@@ -153,7 +146,7 @@ public class OMDataExtractor implements IDataExtractor {
                 if (rhArray != null && !rhArray.isNull(i)) hourlyForecast.setHumidity((float) rhArray.getDouble(i));
                 //if (rhArray != null) hourlyForecast.setHumidity((float) (i-24));  //for icon test
                 if (pressureArray != null && !pressureArray.isNull(i)) hourlyForecast.setPressure((float) pressureArray.getDouble(i));
-                if (prefManager.getBoolean("pref_snow", false)) {
+                if (snowMode) {
                     float precipitationAmount=0;
                     if (snowfallArray != null && !snowfallArray.isNull(i)) precipitationAmount += (float) snowfallArray.getDouble(i)*10;  //snowfall is reported in cm instead of mm
                     if (rainArray != null && !rainArray.isNull(i)) precipitationAmount += (float) rainArray.getDouble(i);
@@ -180,8 +173,6 @@ public class OMDataExtractor implements IDataExtractor {
     @Override
     public List<QuarterHourlyForecast> extractQuarterHourlyForecast(String data) {
         try {
-            SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context);
-
             List<QuarterHourlyForecast> quarterHourlyForecasts = new ArrayList<>();
             JSONObject jsonData = new JSONObject(data);
             JSONArray timeArray = jsonData.getJSONArray("time");
@@ -202,7 +193,7 @@ public class OMDataExtractor implements IDataExtractor {
                 if (timeArray != null && !timeArray.isNull(i)) quarterHourlyForecast.setForecastTime(timeArray.getLong(i)*1000L);
                 if (weathercodeArray != null && !weathercodeArray.isNull(i)) quarterHourlyForecast.setWeatherID(conversion.convertWeatherCategory(weathercodeArray.getString(i)));
                 if (tempArray != null && !tempArray.isNull(i)) quarterHourlyForecast.setTemperature((float) tempArray.getDouble(i));
-                if (prefManager.getBoolean("pref_snow", false)) {
+                if (snowMode) {
                     float precipitationAmount=0;
                     if (snowfallArray != null && !snowfallArray.isNull(i)) precipitationAmount += (float) snowfallArray.getDouble(i)*10;  //snowfall is reported in cm instead of mm
                     if (rainArray != null && !rainArray.isNull(i)) precipitationAmount += (float) rainArray.getDouble(i);

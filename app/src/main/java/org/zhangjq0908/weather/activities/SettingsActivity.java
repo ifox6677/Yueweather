@@ -73,6 +73,12 @@ public class SettingsActivity extends NavigationActivity implements SharedPrefer
     }
 
     @Override
+    protected void onPause() {
+        PreferenceManager.getDefaultSharedPreferences(this.getApplicationContext()).unregisterOnSharedPreferenceChangeListener(this);
+        super.onPause();
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 

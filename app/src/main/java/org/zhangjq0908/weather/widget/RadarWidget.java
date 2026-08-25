@@ -35,7 +35,7 @@ import org.zhangjq0908.weather.activities.RainViewerActivity;
 import org.zhangjq0908.weather.database.CityToWatch;
 import org.zhangjq0908.weather.database.CurrentWeatherData;
 import org.zhangjq0908.weather.database.SQLiteHelper;
-import org.zhangjq0908.weather.services.UpdateDataService;
+import org.zhangjq0908.weather.services.WeatherUpdateWorker;
 import org.zhangjq0908.weather.services.WidgetUpdater;
 
 import java.util.List;
@@ -56,7 +56,7 @@ public class RadarWidget extends AppWidgetProvider {
 
             int cityID = getWidgetCityID(context);
             if(prefManager.getBoolean("pref_GPS", false) && !prefManager.getBoolean("pref_GPS_manual", false)) updateLocation(context, cityID,false);
-            UpdateDataService.enqueueWork(context, UpdateDataService.UPDATE_SINGLE_ACTION, cityID, true);
+            WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
         }
     }
 
@@ -136,9 +136,7 @@ public class RadarWidget extends AppWidgetProvider {
         }
         views.setOnClickPendingIntent(R.id.widget_layout, pendingIntent);
 
-        if (radarBitmap != null) views.setImageViewBitmap(R.id.widget_radar_view, UpdateDataService.prepareRadarWidget(context, city, RainViewerActivity.rainViewerWidgetZoom, radarTimeGMT + zoneseconds *1000L, radarBitmap));
-
-        UpdateDataService.enqueueWork(context, UpdateDataService.UPDATE_RADAR, getWidgetCityID(context), false);
+        if (radarBitmap != null) views.setImageViewBitmap(R.id.widget_radar_view, WeatherUpdateWorker.prepareRadarWidget(context, city, radarZoom, radarTimeGMT + zoneseconds *1000L, radarBitmap));
 
         // Instruct the widget manager to update the widget
         appWidgetManager.updateAppWidget(appWidgetId, views);

@@ -74,7 +74,8 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
     @Override
     public void processSuccessScenario(String response, int cityId) {
 
-        IDataExtractor extractor = new OMDataExtractor(context);
+        boolean snowMode = PreferenceManager.getDefaultSharedPreferences(context).getBoolean("pref_snow", false);
+        IDataExtractor extractor = new OMDataExtractor(snowMode);
         try {
             JSONObject json = new JSONObject(response);
 

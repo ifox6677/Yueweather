@@ -3,14 +3,11 @@ package org.zhangjq0908.weather.activities;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 
 import androidx.appcompat.app.AlertDialog;
-import androidx.activity.OnBackPressedCallback;
 import androidx.preference.PreferenceManager;
 import com.google.android.material.navigation.NavigationView;
 import com.google.android.material.navigation.NavigationView.OnNavigationItemSelectedListener;
@@ -18,18 +15,17 @@ import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.appcompat.app.ActionBarDrawerToggle;
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 
 import android.os.Looper;
-import android.view.Menu;
 import android.view.MenuItem;
 
 
-import org.woheller69.freeDroidWarn.FreeDroidWarn;
+
 import org.zhangjq0908.weather.BuildConfig;
 import org.zhangjq0908.weather.R;
-import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.preferences.AppPreferencesManager;
 
 import static java.lang.Boolean.TRUE;
@@ -58,7 +54,6 @@ public class NavigationActivity extends AppCompatActivity implements OnNavigatio
 
         mSharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
         mHandler = new Handler(Looper.getMainLooper());
-        FreeDroidWarn.showWarningOnUpgrade(this, BuildConfig.VERSION_CODE);
         prefManager = new AppPreferencesManager(PreferenceManager.getDefaultSharedPreferences(this));
         if (prefManager.showStarDialog(this)) {
             AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(this);
@@ -88,23 +83,21 @@ public class NavigationActivity extends AppCompatActivity implements OnNavigatio
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                DrawerLayout drawer = (DrawerLayout) findViewById(R.id.drawer_layout);
-                if (drawer.isDrawerOpen(GravityCompat.START)) {
+                DrawerLayout drawer = findViewById(R.id.drawer_layout);
+                if (drawer != null && drawer.isDrawerOpen(GravityCompat.START)) {
                     drawer.closeDrawer(GravityCompat.START);
                 } else {
-                    if (getNavigationDrawerID()!=R.id.nav_weather)
-                    {
-                        Intent intent = new Intent(NavigationActivity.this, ForecastCityActivity.class);
-                        startActivity(intent);
-                    }else{
-                        Intent intent = new Intent();
-                        intent.setAction(Intent.ACTION_MAIN);
-                        intent.addCategory(Intent.CATEGORY_HOME);
-                        startActivity(intent);
+                    if (getNavigationDrawerID() != R.id.nav_weather) {
+                        finish();  //return to the ForecastCityActivity below on the back stack
+                    } else {
+                        setEnabled(false);
+                        getOnBackPressedDispatcher().onBackPressed();
+                        setEnabled(true);
                     }
                 }
             }
         });
+
     }
 
     protected int getNavigationDrawerID() {
@@ -150,16 +143,19 @@ public class NavigationActivity extends AppCompatActivity implements OnNavigatio
         }
     }
 
+    private void applyNightMode() {
+        boolean darkMode = mSharedPreferences.getBoolean("pref_DarkMode", false);
+        int newMode = darkMode ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO;
+        if (AppCompatDelegate.getDefaultNightMode() != newMode) {  //skip no-op changes to avoid needless recreation
+            AppCompatDelegate.setDefaultNightMode(newMode);
+        }
+    }
+
     private void callDrawerItem(final int itemId) {
 
-        Intent intent;
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-        if(sharedPreferences.getBoolean("pref_DarkMode", false)==TRUE) {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
-        }else {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
-        }
+        applyNightMode();
 
+        Intent intent;
         if (itemId==R.id.nav_weather) {
             intent = new Intent(this, ForecastCityActivity.class);
             startActivity(intent);
@@ -171,12 +167,6 @@ public class NavigationActivity extends AppCompatActivity implements OnNavigatio
             startActivity(intent);
         }else if(itemId==R.id.nav_settings) {
             intent = new Intent(this, SettingsActivity.class);
-            startActivity(intent);
-        }else if(itemId==R.id.nav_backuprestore) {
-            SQLiteHelper dbhelper = SQLiteHelper.getInstance(this);  //create a database if it does not yet exist
-            SQLiteDatabase database = dbhelper.getWritableDatabase();
-            database.close();
-            intent = new Intent(this, BackupRestoreActivity.class);
             startActivity(intent);
         }else if (itemId==R.id.star_on_github){
             startActivity(new Intent(Intent.ACTION_VIEW,
@@ -203,12 +193,6 @@ public class NavigationActivity extends AppCompatActivity implements OnNavigatio
 
         mNavigationView = findViewById(R.id.nav_view);
 
-        Menu menu = mNavigationView.getMenu();
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            // Remove the menu item if SDK is less than 26
-            menu.removeItem(R.id.nav_backuprestore);
-        }
-
         mNavigationView.setNavigationItemSelectedListener(this);
 
         selectNavigationItem(getNavigationDrawerID());
@@ -218,12 +202,7 @@ public class NavigationActivity extends AppCompatActivity implements OnNavigatio
     protected void onResume() {
         super.onResume();
         isVisible=true;
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-        if(sharedPreferences.getBoolean("pref_DarkMode", false)==TRUE) {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
-        }else {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
-        }
+        applyNightMode();
     }
 
     @Override

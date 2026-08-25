@@ -38,7 +38,7 @@ import org.zhangjq0908.weather.database.HourlyForecast;
 import org.zhangjq0908.weather.database.QuarterHourlyForecast;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.database.WeekForecast;
-import org.zhangjq0908.weather.services.UpdateDataService;
+import org.zhangjq0908.weather.services.WeatherUpdateWorker;
 import org.zhangjq0908.weather.services.WidgetUpdater;
 import org.zhangjq0908.weather.ui.Help.StringFormatUtils;
 import org.zhangjq0908.weather.ui.UiResourceProvider;
@@ -61,7 +61,7 @@ public class WeatherDigitalClockWidget extends AppWidgetProvider {
 
             int cityID = getWidgetCityID(context);
             if(prefManager.getBoolean("pref_GPS", false) && !prefManager.getBoolean("pref_GPS_manual", false)) updateLocation(context, cityID,false);
-            UpdateDataService.enqueueWork(context, UpdateDataService.UPDATE_SINGLE_ACTION, cityID, true);
+            WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
         }
     }
 

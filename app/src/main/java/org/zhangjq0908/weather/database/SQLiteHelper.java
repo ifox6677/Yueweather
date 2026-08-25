@@ -18,7 +18,7 @@ import java.util.List;
  */
 public class SQLiteHelper extends SQLiteOpenHelper {
 
-    private static final int DATABASE_VERSION = 4;
+    private static final int DATABASE_VERSION = 5;
     private Context context;
 
     private List<City> allCities = new ArrayList<>();
@@ -181,7 +181,20 @@ public class SQLiteHelper extends SQLiteOpenHelper {
             CITIES_TO_WATCH_LONGITUDE + " REAL NOT NULL," +
             CITIES_TO_WATCH_LATITUDE + " REAL NOT NULL ); ";
 
-    public static SQLiteHelper getInstance(Context context) {
+    private static final String CREATE_INDEX_CURRENT_WEATHER_CITY = "CREATE UNIQUE INDEX IF NOT EXISTS idx_current_weather_city ON " +
+            TABLE_CURRENT_WEATHER + "(" + CURRENT_WEATHER_CITY_ID + ")";
+    private static final String CREATE_INDEX_HOURLY_FORECAST_CITY = "CREATE INDEX IF NOT EXISTS idx_hourly_forecast_city ON " +
+            TABLE_HOURLY_FORECAST + "(" + FORECAST_CITY_ID + ")";
+    private static final String CREATE_INDEX_WEEKFORECAST_CITY = "CREATE INDEX IF NOT EXISTS idx_weekforecast_city ON " +
+            TABLE_WEEKFORECAST + "(" + WEEKFORECAST_CITY_ID + ")";
+    private static final String CREATE_INDEX_QUARTERHOURLYFORECAST_CITY = "CREATE INDEX IF NOT EXISTS idx_quarterhourlyforecast_city ON " +
+            TABLE_QUARTERHOURLYFORECAST + "(" + QUARTERHOURLYFORECAST_CITY_ID + ")";
+
+    private static final String DEDUPE_CURRENT_WEATHER = "DELETE FROM " + TABLE_CURRENT_WEATHER +
+            " WHERE " + CURRENT_WEATHER_ID + " NOT IN (SELECT MIN(" + CURRENT_WEATHER_ID + ")" +
+            " FROM " + TABLE_CURRENT_WEATHER + " GROUP BY " + CURRENT_WEATHER_CITY_ID + ")";
+
+    public static synchronized SQLiteHelper getInstance(Context context) {
         if (instance == null && context != null) {
             instance = new SQLiteHelper(context.getApplicationContext());
         }
@@ -201,6 +214,10 @@ public class SQLiteHelper extends SQLiteOpenHelper {
         db.execSQL(CREATE_TABLE_FORECASTS);
         db.execSQL(CREATE_TABLE_WEEKFORECASTS);
         db.execSQL(CREATE_TABLE_QUARTERHOURLYFORECASTS);
+        db.execSQL(CREATE_INDEX_CURRENT_WEATHER_CITY);
+        db.execSQL(CREATE_INDEX_HOURLY_FORECAST_CITY);
+        db.execSQL(CREATE_INDEX_WEEKFORECAST_CITY);
+        db.execSQL(CREATE_INDEX_QUARTERHOURLYFORECAST_CITY);
     }
 
     @Override
@@ -213,6 +230,13 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                 db.execSQL("ALTER TABLE "+TABLE_WEEKFORECAST+" ADD COLUMN "+ WEEKFORECAST_COLUMN_SUNSHINE_HOURS +" REAL DEFAULT 0");
             case 3:
                 db.execSQL("ALTER TABLE " + TABLE_HOURLY_FORECAST+" ADD COLUMN " + FORECAST_COLUMN_UV_INDEX + " REAL DEFAULT -1");
+            case 4:
+                //remove duplicate rows before creating the unique index
+                db.execSQL(DEDUPE_CURRENT_WEATHER);
+                db.execSQL(CREATE_INDEX_CURRENT_WEATHER_CITY);
+                db.execSQL(CREATE_INDEX_HOURLY_FORECAST_CITY);
+                db.execSQL(CREATE_INDEX_WEEKFORECAST_CITY);
+                db.execSQL(CREATE_INDEX_QUARTERHOURLYFORECAST_CITY);
         }
     }
 
@@ -231,23 +255,31 @@ public class SQLiteHelper extends SQLiteOpenHelper {
         values.put(CITIES_TO_WATCH_LATITUDE,city.getLatitude());
         values.put(CITIES_TO_WATCH_LONGITUDE,city.getLongitude());
 
-        long id=database.insert(TABLE_CITIES_TO_WATCH, null, values);
+        long id;
+        database.beginTransaction();
+        try {
+            id = database.insert(TABLE_CITIES_TO_WATCH, null, values);
 
-        //use id also instead of city id as unique identifier
-        values.put(CITIES_TO_WATCH_CITY_ID,id);
-        database.update(TABLE_CITIES_TO_WATCH, values, CITIES_TO_WATCH_ID + " = ?",
-                new String[]{String.valueOf(id)});
+            //use id also instead of city id as unique identifier
+            values.put(CITIES_TO_WATCH_CITY_ID,id);
+            database.update(TABLE_CITIES_TO_WATCH, values, CITIES_TO_WATCH_ID + " = ?",
+                    new String[]{String.valueOf(id)});
 
-        database.close();
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
+        }
         return id;
     }
 
     public synchronized CityToWatch getCityToWatch(int id) {
-        SQLiteDatabase database = this.getWritableDatabase();
+        SQLiteDatabase database = this.getReadableDatabase();
 
         String[] arguments = {String.valueOf(id)};
 
-        Cursor cursor = database.rawQuery(
+        CityToWatch cityToWatch = new CityToWatch();
+
+        try (Cursor cursor = database.rawQuery(
                 "SELECT " + CITIES_TO_WATCH_ID +
                         ", " + CITIES_TO_WATCH_CITY_ID +
                         ", " + CITIES_TO_WATCH_NAME +
@@ -255,21 +287,17 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                         ", " + CITIES_TO_WATCH_LATITUDE +
                         ", " + CITIES_TO_WATCH_COLUMN_RANK +
                         " FROM " + TABLE_CITIES_TO_WATCH +
-                        " WHERE " + CITIES_TO_WATCH_CITY_ID + " = ?", arguments);
+                        " WHERE " + CITIES_TO_WATCH_CITY_ID + " = ?", arguments)) {
 
-        CityToWatch cityToWatch = new CityToWatch();
-
-        if (cursor != null && cursor.moveToFirst()) {
-            cityToWatch.setId(Integer.parseInt(cursor.getString(0)));
-            cityToWatch.setCityId(Integer.parseInt(cursor.getString(1)));
-            cityToWatch.setCityName(cursor.getString(2));
-            cityToWatch.setLongitude(Float.parseFloat(cursor.getString(3)));
-            cityToWatch.setLatitude(Float.parseFloat(cursor.getString(4)));
-            cityToWatch.setRank(Integer.parseInt(cursor.getString(5)));
-
-            cursor.close();
+            if (cursor.moveToFirst()) {
+                cityToWatch.setId(cursor.getInt(0));
+                cityToWatch.setCityId(cursor.getInt(1));
+                cityToWatch.setCityName(cursor.getString(2));
+                cityToWatch.setLongitude(cursor.getFloat(3));
+                cityToWatch.setLatitude(cursor.getFloat(4));
+                cityToWatch.setRank(cursor.getInt(5));
+            }
         }
-        database.close();
         return cityToWatch;
 
     }
@@ -278,9 +306,9 @@ public class SQLiteHelper extends SQLiteOpenHelper {
     public synchronized List<CityToWatch> getAllCitiesToWatch() {
         List<CityToWatch> cityToWatchList = new ArrayList<>();
 
-        SQLiteDatabase database = this.getWritableDatabase();
+        SQLiteDatabase database = this.getReadableDatabase();
 
-        Cursor cursor = database.rawQuery(
+        try (Cursor cursor = database.rawQuery(
                 "SELECT " + CITIES_TO_WATCH_ID +
                         ", " + CITIES_TO_WATCH_CITY_ID +
                         ", " + CITIES_TO_WATCH_NAME +
@@ -288,26 +316,24 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                         ", " + CITIES_TO_WATCH_LATITUDE +
                         ", " + CITIES_TO_WATCH_COLUMN_RANK +
                         " FROM " + TABLE_CITIES_TO_WATCH
-                , new String[]{});
+                , new String[]{})) {
 
-        CityToWatch cityToWatch;
+            CityToWatch cityToWatch;
 
-        if (cursor.moveToFirst()) {
-            do {
-                cityToWatch = new CityToWatch();
-                cityToWatch.setId(Integer.parseInt(cursor.getString(0)));
-                cityToWatch.setCityId(Integer.parseInt(cursor.getString(1)));
-                cityToWatch.setCityName(cursor.getString(2));
-                cityToWatch.setLongitude(Float.parseFloat(cursor.getString(3)));
-                cityToWatch.setLatitude(Float.parseFloat(cursor.getString(4)));
-                cityToWatch.setRank(Integer.parseInt(cursor.getString(5)));
+            if (cursor.moveToFirst()) {
+                do {
+                    cityToWatch = new CityToWatch();
+                    cityToWatch.setId(cursor.getInt(0));
+                    cityToWatch.setCityId(cursor.getInt(1));
+                    cityToWatch.setCityName(cursor.getString(2));
+                    cityToWatch.setLongitude(cursor.getFloat(3));
+                    cityToWatch.setLatitude(cursor.getFloat(4));
+                    cityToWatch.setRank(cursor.getInt(5));
 
-                cityToWatchList.add(cityToWatch);
-            } while (cursor.moveToNext());
+                    cityToWatchList.add(cityToWatch);
+                } while (cursor.moveToNext());
+            }
         }
-
-        cursor.close();
-        database.close();
         return cityToWatchList;
     }
 
@@ -323,28 +349,32 @@ public class SQLiteHelper extends SQLiteOpenHelper {
 
         database.update(TABLE_CITIES_TO_WATCH, values, CITIES_TO_WATCH_ID + " = ?",
                 new String[]{String.valueOf(cityToWatch.getId())});
-        database.close();
     }
 
     public synchronized void deleteCityToWatch(CityToWatch cityToWatch) {
-
-        //First delete all weather data for city which is deleted
-        deleteCurrentWeatherByCityId(cityToWatch.getCityId());
-        deleteForecastsByCityId(cityToWatch.getCityId());
-        deleteWeekForecastsByCityId(cityToWatch.getCityId());
-        deleteQuarterHourlyForecastsByCityId(cityToWatch.getCityId());
-
-        //Now remove city from CITIES_TO_WATCH
         SQLiteDatabase database = this.getWritableDatabase();
-        database.delete(TABLE_CITIES_TO_WATCH, CITIES_TO_WATCH_ID + " = ?",
-                new String[]{Integer.toString(cityToWatch.getId())});
-        database.close();
+        database.beginTransaction();
+        try {
+            //First delete all weather data for city which is deleted
+            String[] forecastWhereArgs = new String[]{Integer.toString(cityToWatch.getCityId())};
+            database.delete(TABLE_CURRENT_WEATHER, CURRENT_WEATHER_CITY_ID + " = ?", forecastWhereArgs);
+            database.delete(TABLE_HOURLY_FORECAST, FORECAST_CITY_ID + " = ?", forecastWhereArgs);
+            database.delete(TABLE_WEEKFORECAST, WEEKFORECAST_CITY_ID + " = ?", forecastWhereArgs);
+            database.delete(TABLE_QUARTERHOURLYFORECAST, QUARTERHOURLYFORECAST_CITY_ID + " = ?", forecastWhereArgs);
+
+            //Now remove city from CITIES_TO_WATCH
+            database.delete(TABLE_CITIES_TO_WATCH, CITIES_TO_WATCH_ID + " = ?",
+                    new String[]{Integer.toString(cityToWatch.getId())});
+
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
+        }
     }
 
     public synchronized int getWatchedCitiesCount() {
         SQLiteDatabase database = this.getWritableDatabase();
         long count = DatabaseUtils.queryNumEntries(database, TABLE_CITIES_TO_WATCH);
-        database.close();
         return (int) count;
     }
 
@@ -362,52 +392,58 @@ public class SQLiteHelper extends SQLiteOpenHelper {
      */
 
     public synchronized boolean hasQuarterHourly(int cityId) {
-        SQLiteDatabase database = this.getWritableDatabase();
-        Cursor cursor = database.query(TABLE_QUARTERHOURLYFORECAST,
+        SQLiteDatabase database = this.getReadableDatabase();
+        boolean result = false;
+        try (Cursor cursor = database.query(TABLE_QUARTERHOURLYFORECAST,
                 new String[]{QUARTERHOURLYFORECAST_CITY_ID}
                 , QUARTERHOURLYFORECAST_CITY_ID + "=?",
-                new String[]{String.valueOf(cityId)}, null, null, null, null);
-        boolean result = false;
-        if (cursor != null && cursor.moveToFirst()){
-            result = true;
-            cursor.close();
+                new String[]{String.valueOf(cityId)}, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()){
+                result = true;
+            }
         }
-        database.close();
         return result;
     }
 
 
     public synchronized void replaceQuarterHourlyForecasts(List<QuarterHourlyForecast> quarterHourlyForecasts) {
+        if (quarterHourlyForecasts == null || quarterHourlyForecasts.isEmpty()) return;
         SQLiteDatabase database = this.getWritableDatabase();
-        database.delete(TABLE_QUARTERHOURLYFORECAST, QUARTERHOURLYFORECAST_CITY_ID + " = ?",
-                new String[]{Integer.toString(quarterHourlyForecasts.get(0).getCity_id())});
-        for (QuarterHourlyForecast quarterHourlyForecast: quarterHourlyForecasts) {
-            ContentValues values = new ContentValues();
-            values.put(QUARTERHOURLYFORECAST_CITY_ID, quarterHourlyForecast.getCity_id());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_TIME_MEASUREMENT, quarterHourlyForecast.getTimestamp());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_FORECAST_FOR, quarterHourlyForecast.getForecastTime());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_WEATHER_ID, quarterHourlyForecast.getWeatherID());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_TEMPERATURE_CURRENT, quarterHourlyForecast.getTemperature());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_PRECIPITATION, quarterHourlyForecast.getPrecipitation());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_WIND_SPEED, quarterHourlyForecast.getWindSpeed());
-            values.put(QUARTERHOURLYFORECAST_COLUMN_WIND_DIRECTION, quarterHourlyForecast.getWindDirection());
-            database.insert(TABLE_QUARTERHOURLYFORECAST, null, values);
+        database.beginTransaction();
+        try {
+            database.delete(TABLE_QUARTERHOURLYFORECAST, QUARTERHOURLYFORECAST_CITY_ID + " = ?",
+                    new String[]{Integer.toString(quarterHourlyForecasts.get(0).getCity_id())});
+            for (QuarterHourlyForecast quarterHourlyForecast: quarterHourlyForecasts) {
+                ContentValues values = new ContentValues();
+                values.put(QUARTERHOURLYFORECAST_CITY_ID, quarterHourlyForecast.getCity_id());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_TIME_MEASUREMENT, quarterHourlyForecast.getTimestamp());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_FORECAST_FOR, quarterHourlyForecast.getForecastTime());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_WEATHER_ID, quarterHourlyForecast.getWeatherID());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_TEMPERATURE_CURRENT, quarterHourlyForecast.getTemperature());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_PRECIPITATION, quarterHourlyForecast.getPrecipitation());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_WIND_SPEED, quarterHourlyForecast.getWindSpeed());
+                values.put(QUARTERHOURLYFORECAST_COLUMN_WIND_DIRECTION, quarterHourlyForecast.getWindDirection());
+                database.insert(TABLE_QUARTERHOURLYFORECAST, null, values);
+            }
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
         }
-        database.close();
     }
 
     public synchronized void deleteQuarterHourlyForecastsByCityId(int cityId) {
         SQLiteDatabase database = this.getWritableDatabase();
         database.delete(TABLE_QUARTERHOURLYFORECAST, QUARTERHOURLYFORECAST_CITY_ID + " = ?",
                 new String[]{Integer.toString(cityId)});
-        database.close();
     }
 
 
     public synchronized List<QuarterHourlyForecast> getQuarterHourlyForecastsByCityId(int cityId) {
-        SQLiteDatabase database = this.getWritableDatabase();
+        SQLiteDatabase database = this.getReadableDatabase();
 
-        Cursor cursor = database.query(TABLE_QUARTERHOURLYFORECAST,
+        List<QuarterHourlyForecast> list = new ArrayList<>();
+
+        try (Cursor cursor = database.query(TABLE_QUARTERHOURLYFORECAST,
                 new String[]{QUARTERHOURLYFORECAST_ID,
                         QUARTERHOURLYFORECAST_CITY_ID,
                         QUARTERHOURLYFORECAST_COLUMN_TIME_MEASUREMENT,
@@ -418,29 +454,26 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                         QUARTERHOURLYFORECAST_COLUMN_WIND_SPEED,
                         QUARTERHOURLYFORECAST_COLUMN_WIND_DIRECTION}
                 , QUARTERHOURLYFORECAST_CITY_ID + "=?",
-                new String[]{String.valueOf(cityId)}, null, null, null, null);
+                new String[]{String.valueOf(cityId)}, null, null, null, null)) {
 
-        List<QuarterHourlyForecast> list = new ArrayList<>();
-        QuarterHourlyForecast quarterHourlyForecast;
+            QuarterHourlyForecast quarterHourlyForecast;
 
-        if (cursor != null && cursor.moveToFirst()) {
-            do {
-                quarterHourlyForecast = new QuarterHourlyForecast();
-                quarterHourlyForecast.setId(Integer.parseInt(cursor.getString(0)));
-                quarterHourlyForecast.setCity_id(Integer.parseInt(cursor.getString(1)));
-                quarterHourlyForecast.setTimestamp(Long.parseLong(cursor.getString(2)));
-                quarterHourlyForecast.setForecastTime(Long.parseLong(cursor.getString(3)));
-                quarterHourlyForecast.setWeatherID(Integer.parseInt(cursor.getString(4)));
-                quarterHourlyForecast.setTemperature(Float.parseFloat(cursor.getString(5)));
-                quarterHourlyForecast.setPrecipitation(Float.parseFloat(cursor.getString(6)));
-                quarterHourlyForecast.setWindSpeed(Float.parseFloat(cursor.getString(7)));
-                quarterHourlyForecast.setWindDirection(Float.parseFloat(cursor.getString(8)));
-                list.add(quarterHourlyForecast);
-            } while (cursor.moveToNext());
-
-            cursor.close();
+            if (cursor != null && cursor.moveToFirst()) {
+                do {
+                    quarterHourlyForecast = new QuarterHourlyForecast();
+                    quarterHourlyForecast.setId(cursor.getInt(0));
+                    quarterHourlyForecast.setCity_id(cursor.getInt(1));
+                    quarterHourlyForecast.setTimestamp(cursor.getLong(2));
+                    quarterHourlyForecast.setForecastTime(cursor.getLong(3));
+                    quarterHourlyForecast.setWeatherID(cursor.getInt(4));
+                    quarterHourlyForecast.setTemperature(cursor.getFloat(5));
+                    quarterHourlyForecast.setPrecipitation(cursor.getFloat(6));
+                    quarterHourlyForecast.setWindSpeed(cursor.getFloat(7));
+                    quarterHourlyForecast.setWindDirection(cursor.getFloat(8));
+                    list.add(quarterHourlyForecast);
+                } while (cursor.moveToNext());
+            }
         }
-        database.close();
         return list;
     }
 
@@ -448,39 +481,46 @@ public class SQLiteHelper extends SQLiteOpenHelper {
      * Methods for TABLE_FORECAST
      */
     public synchronized void replaceForecasts(List<HourlyForecast> hourlyForecasts) {
+        if (hourlyForecasts == null || hourlyForecasts.isEmpty()) return;
         SQLiteDatabase database = this.getWritableDatabase();
-        database.delete(TABLE_HOURLY_FORECAST, FORECAST_CITY_ID + " = ?",
-                new String[]{Integer.toString(hourlyForecasts.get(0).getCity_id())});
-        for (HourlyForecast hourlyForecast: hourlyForecasts) {
-            ContentValues values = new ContentValues();
-            values.put(FORECAST_CITY_ID, hourlyForecast.getCity_id());
-            values.put(FORECAST_COLUMN_TIME_MEASUREMENT, hourlyForecast.getTimestamp());
-            values.put(FORECAST_COLUMN_FORECAST_FOR, hourlyForecast.getForecastTime());
-            values.put(FORECAST_COLUMN_WEATHER_ID, hourlyForecast.getWeatherID());
-            values.put(FORECAST_COLUMN_TEMPERATURE_CURRENT, hourlyForecast.getTemperature());
-            values.put(FORECAST_COLUMN_HUMIDITY, hourlyForecast.getHumidity());
-            values.put(FORECAST_COLUMN_PRESSURE, hourlyForecast.getPressure());
-            values.put(FORECAST_COLUMN_PRECIPITATION, hourlyForecast.getPrecipitation());
-            values.put(FORECAST_COLUMN_WIND_SPEED, hourlyForecast.getWindSpeed());
-            values.put(FORECAST_COLUMN_WIND_DIRECTION, hourlyForecast.getWindDirection());
-            values.put(FORECAST_COLUMN_UV_INDEX, hourlyForecast.getUvIndex());
-            database.insert(TABLE_HOURLY_FORECAST, null, values);
+        database.beginTransaction();
+        try {
+            database.delete(TABLE_HOURLY_FORECAST, FORECAST_CITY_ID + " = ?",
+                    new String[]{Integer.toString(hourlyForecasts.get(0).getCity_id())});
+            for (HourlyForecast hourlyForecast: hourlyForecasts) {
+                ContentValues values = new ContentValues();
+                values.put(FORECAST_CITY_ID, hourlyForecast.getCity_id());
+                values.put(FORECAST_COLUMN_TIME_MEASUREMENT, hourlyForecast.getTimestamp());
+                values.put(FORECAST_COLUMN_FORECAST_FOR, hourlyForecast.getForecastTime());
+                values.put(FORECAST_COLUMN_WEATHER_ID, hourlyForecast.getWeatherID());
+                values.put(FORECAST_COLUMN_TEMPERATURE_CURRENT, hourlyForecast.getTemperature());
+                values.put(FORECAST_COLUMN_HUMIDITY, hourlyForecast.getHumidity());
+                values.put(FORECAST_COLUMN_PRESSURE, hourlyForecast.getPressure());
+                values.put(FORECAST_COLUMN_PRECIPITATION, hourlyForecast.getPrecipitation());
+                values.put(FORECAST_COLUMN_WIND_SPEED, hourlyForecast.getWindSpeed());
+                values.put(FORECAST_COLUMN_WIND_DIRECTION, hourlyForecast.getWindDirection());
+                values.put(FORECAST_COLUMN_UV_INDEX, hourlyForecast.getUvIndex());
+                database.insert(TABLE_HOURLY_FORECAST, null, values);
+            }
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
         }
-        database.close();
     }
 
     public synchronized void deleteForecastsByCityId(int cityId) {
         SQLiteDatabase database = this.getWritableDatabase();
         database.delete(TABLE_HOURLY_FORECAST, FORECAST_CITY_ID + " = ?",
                 new String[]{Integer.toString(cityId)});
-        database.close();
     }
 
 
     public synchronized List<HourlyForecast> getForecastsByCityId(int cityId) {
-        SQLiteDatabase database = this.getWritableDatabase();
+        SQLiteDatabase database = this.getReadableDatabase();
 
-        Cursor cursor = database.query(TABLE_HOURLY_FORECAST,
+        List<HourlyForecast> list = new ArrayList<>();
+
+        try (Cursor cursor = database.query(TABLE_HOURLY_FORECAST,
                 new String[]{FORECAST_ID,
                         FORECAST_CITY_ID,
                         FORECAST_COLUMN_TIME_MEASUREMENT,
@@ -494,32 +534,29 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                         FORECAST_COLUMN_WIND_DIRECTION,
                         FORECAST_COLUMN_UV_INDEX}
                 , FORECAST_CITY_ID + "=?",
-                new String[]{String.valueOf(cityId)}, null, null, null, null);
+                new String[]{String.valueOf(cityId)}, null, null, null, null)) {
 
-        List<HourlyForecast> list = new ArrayList<>();
-        HourlyForecast hourlyForecast;
+            HourlyForecast hourlyForecast;
 
-        if (cursor != null && cursor.moveToFirst()) {
-            do {
-                hourlyForecast = new HourlyForecast();
-                hourlyForecast.setId(Integer.parseInt(cursor.getString(0)));
-                hourlyForecast.setCity_id(Integer.parseInt(cursor.getString(1)));
-                hourlyForecast.setTimestamp(Long.parseLong(cursor.getString(2)));
-                hourlyForecast.setForecastTime(Long.parseLong(cursor.getString(3)));
-                hourlyForecast.setWeatherID(Integer.parseInt(cursor.getString(4)));
-                hourlyForecast.setTemperature(Float.parseFloat(cursor.getString(5)));
-                hourlyForecast.setHumidity(Float.parseFloat(cursor.getString(6)));
-                hourlyForecast.setPressure(Float.parseFloat(cursor.getString(7)));
-                hourlyForecast.setPrecipitation(Float.parseFloat(cursor.getString(8)));
-                hourlyForecast.setWindSpeed(Float.parseFloat(cursor.getString(9)));
-                hourlyForecast.setWindDirection(Float.parseFloat(cursor.getString(10)));
-                hourlyForecast.setUvIndex(Float.parseFloat(cursor.getString(11)));
-                list.add(hourlyForecast);
-            } while (cursor.moveToNext());
-
-            cursor.close();
+            if (cursor != null && cursor.moveToFirst()) {
+                do {
+                    hourlyForecast = new HourlyForecast();
+                    hourlyForecast.setId(cursor.getInt(0));
+                    hourlyForecast.setCity_id(cursor.getInt(1));
+                    hourlyForecast.setTimestamp(cursor.getLong(2));
+                    hourlyForecast.setForecastTime(cursor.getLong(3));
+                    hourlyForecast.setWeatherID(cursor.getInt(4));
+                    hourlyForecast.setTemperature(cursor.getFloat(5));
+                    hourlyForecast.setHumidity(cursor.getFloat(6));
+                    hourlyForecast.setPressure(cursor.getFloat(7));
+                    hourlyForecast.setPrecipitation(cursor.getFloat(8));
+                    hourlyForecast.setWindSpeed(cursor.getFloat(9));
+                    hourlyForecast.setWindDirection(cursor.getFloat(10));
+                    hourlyForecast.setUvIndex(cursor.getFloat(11));
+                    list.add(hourlyForecast);
+                } while (cursor.moveToNext());
+            }
         }
-        database.close();
         return list;
     }
 
@@ -528,46 +565,53 @@ public class SQLiteHelper extends SQLiteOpenHelper {
      * Methods for TABLE_WEEKFORECAST
      */
     public synchronized void replaceWeekForecasts(List<WeekForecast> weekForecasts) {
+        if (weekForecasts == null || weekForecasts.isEmpty()) return;
         SQLiteDatabase database = this.getWritableDatabase();
-        database.delete(TABLE_WEEKFORECAST, WEEKFORECAST_CITY_ID + " = ?",
-                new String[]{Integer.toString(weekForecasts.get(0).getCity_id())});
-        for (WeekForecast weekForecast: weekForecasts) {
-            ContentValues values = new ContentValues();
-            values.put(WEEKFORECAST_CITY_ID, weekForecast.getCity_id());
-            values.put(WEEKFORECAST_COLUMN_TIME_MEASUREMENT, weekForecast.getTimestamp());
-            values.put(WEEKFORECAST_COLUMN_FORECAST_FOR, weekForecast.getForecastTime());
-            values.put(WEEKFORECAST_COLUMN_WEATHER_ID, weekForecast.getWeatherID());
-            values.put(WEEKFORECAST_COLUMN_TEMPERATURE_CURRENT, weekForecast.getTemperature());
-            values.put(WEEKFORECAST_COLUMN_TEMPERATURE_MIN, weekForecast.getMinTemperature());
-            values.put(WEEKFORECAST_COLUMN_TEMPERATURE_MAX, weekForecast.getMaxTemperature());
-            values.put(WEEKFORECAST_COLUMN_HUMIDITY, weekForecast.getHumidity());
-            values.put(WEEKFORECAST_COLUMN_PRESSURE, weekForecast.getPressure());
-            values.put(WEEKFORECAST_COLUMN_PRECIPITATION, weekForecast.getPrecipitation());
-            values.put(WEEKFORECAST_COLUMN_WIND_SPEED, weekForecast.getWind_speed());
-            values.put(WEEKFORECAST_COLUMN_WIND_DIRECTION, weekForecast.getWind_direction());
-            values.put(WEEKFORECAST_COLUMN_UV_INDEX, weekForecast.getUv_index());
-            values.put(WEEKFORECAST_COLUMN_TIME_SUNRISE, weekForecast.getTimeSunrise());
-            values.put(WEEKFORECAST_COLUMN_TIME_SUNSET, weekForecast.getTimeSunset());
-            values.put(WEEKFORECAST_COLUMN_SUNSHINE_HOURS, weekForecast.getSunshineHours());
-            database.insert(TABLE_WEEKFORECAST, null, values);
+        database.beginTransaction();
+        try {
+            database.delete(TABLE_WEEKFORECAST, WEEKFORECAST_CITY_ID + " = ?",
+                    new String[]{Integer.toString(weekForecasts.get(0).getCity_id())});
+            for (WeekForecast weekForecast: weekForecasts) {
+                ContentValues values = new ContentValues();
+                values.put(WEEKFORECAST_CITY_ID, weekForecast.getCity_id());
+                values.put(WEEKFORECAST_COLUMN_TIME_MEASUREMENT, weekForecast.getTimestamp());
+                values.put(WEEKFORECAST_COLUMN_FORECAST_FOR, weekForecast.getForecastTime());
+                values.put(WEEKFORECAST_COLUMN_WEATHER_ID, weekForecast.getWeatherID());
+                values.put(WEEKFORECAST_COLUMN_TEMPERATURE_CURRENT, weekForecast.getTemperature());
+                values.put(WEEKFORECAST_COLUMN_TEMPERATURE_MIN, weekForecast.getMinTemperature());
+                values.put(WEEKFORECAST_COLUMN_TEMPERATURE_MAX, weekForecast.getMaxTemperature());
+                values.put(WEEKFORECAST_COLUMN_HUMIDITY, weekForecast.getHumidity());
+                values.put(WEEKFORECAST_COLUMN_PRESSURE, weekForecast.getPressure());
+                values.put(WEEKFORECAST_COLUMN_PRECIPITATION, weekForecast.getPrecipitation());
+                values.put(WEEKFORECAST_COLUMN_WIND_SPEED, weekForecast.getWind_speed());
+                values.put(WEEKFORECAST_COLUMN_WIND_DIRECTION, weekForecast.getWind_direction());
+                values.put(WEEKFORECAST_COLUMN_UV_INDEX, weekForecast.getUv_index());
+                values.put(WEEKFORECAST_COLUMN_TIME_SUNRISE, weekForecast.getTimeSunrise());
+                values.put(WEEKFORECAST_COLUMN_TIME_SUNSET, weekForecast.getTimeSunset());
+                values.put(WEEKFORECAST_COLUMN_SUNSHINE_HOURS, weekForecast.getSunshineHours());
+                database.insert(TABLE_WEEKFORECAST, null, values);
+            }
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
         }
-        database.close();
     }
 
     public synchronized void deleteWeekForecastsByCityId(int cityId) {
         SQLiteDatabase database = this.getWritableDatabase();
         database.delete(TABLE_WEEKFORECAST, WEEKFORECAST_CITY_ID + " = ?",
                 new String[]{Integer.toString(cityId)});
-        database.close();
     }
 
 
 
 
     public synchronized List<WeekForecast> getWeekForecastsByCityId(int cityId) {
-        SQLiteDatabase database = this.getWritableDatabase();
+        SQLiteDatabase database = this.getReadableDatabase();
 
-        Cursor cursor = database.query(TABLE_WEEKFORECAST,
+        List<WeekForecast> list = new ArrayList<>();
+
+        try (Cursor cursor = database.query(TABLE_WEEKFORECAST,
                 new String[]{WEEKFORECAST_ID,
                         WEEKFORECAST_CITY_ID,
                         WEEKFORECAST_COLUMN_TIME_MEASUREMENT,
@@ -586,37 +630,34 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                         WEEKFORECAST_COLUMN_TIME_SUNSET,
                         WEEKFORECAST_COLUMN_SUNSHINE_HOURS}
                 , WEEKFORECAST_CITY_ID + "=?",
-                new String[]{String.valueOf(cityId)}, null, null, null, null);
+                new String[]{String.valueOf(cityId)}, null, null, null, null)) {
 
-        List<WeekForecast> list = new ArrayList<>();
-        WeekForecast weekForecast;
+            WeekForecast weekForecast;
 
-        if (cursor != null && cursor.moveToFirst()) {
-            do {
-                weekForecast = new WeekForecast();
-                weekForecast.setId(Integer.parseInt(cursor.getString(0)));
-                weekForecast.setCity_id(Integer.parseInt(cursor.getString(1)));
-                weekForecast.setTimestamp(Long.parseLong(cursor.getString(2)));
-                weekForecast.setForecastTime(Long.parseLong(cursor.getString(3)));
-                weekForecast.setWeatherID(Integer.parseInt(cursor.getString(4)));
-                weekForecast.setTemperature(Float.parseFloat(cursor.getString(5)));
-                weekForecast.setMinTemperature(Float.parseFloat(cursor.getString(6)));
-                weekForecast.setMaxTemperature(Float.parseFloat(cursor.getString(7)));
-                weekForecast.setHumidity(Float.parseFloat(cursor.getString(8)));
-                weekForecast.setPressure(Float.parseFloat(cursor.getString(9)));
-                weekForecast.setPrecipitation(Float.parseFloat(cursor.getString(10)));
-                weekForecast.setWind_speed(Float.parseFloat(cursor.getString(11)));
-                weekForecast.setWind_direction(Float.parseFloat(cursor.getString(12)));
-                weekForecast.setUv_index(Float.parseFloat(cursor.getString(13)));
-                weekForecast.setTimeSunrise(Long.parseLong(cursor.getString(14)));
-                weekForecast.setTimeSunset(Long.parseLong(cursor.getString(15)));
-                weekForecast.setSunshineHours(Float.parseFloat(cursor.getString(16)));
-                list.add(weekForecast);
-            } while (cursor.moveToNext());
-
-            cursor.close();
+            if (cursor != null && cursor.moveToFirst()) {
+                do {
+                    weekForecast = new WeekForecast();
+                    weekForecast.setId(cursor.getInt(0));
+                    weekForecast.setCity_id(cursor.getInt(1));
+                    weekForecast.setTimestamp(cursor.getLong(2));
+                    weekForecast.setForecastTime(cursor.getLong(3));
+                    weekForecast.setWeatherID(cursor.getInt(4));
+                    weekForecast.setTemperature(cursor.getFloat(5));
+                    weekForecast.setMinTemperature(cursor.getFloat(6));
+                    weekForecast.setMaxTemperature(cursor.getFloat(7));
+                    weekForecast.setHumidity(cursor.getFloat(8));
+                    weekForecast.setPressure(cursor.getFloat(9));
+                    weekForecast.setPrecipitation(cursor.getFloat(10));
+                    weekForecast.setWind_speed(cursor.getFloat(11));
+                    weekForecast.setWind_direction(cursor.getFloat(12));
+                    weekForecast.setUv_index(cursor.getFloat(13));
+                    weekForecast.setTimeSunrise(cursor.getLong(14));
+                    weekForecast.setTimeSunset(cursor.getLong(15));
+                    weekForecast.setSunshineHours(cursor.getFloat(16));
+                    list.add(weekForecast);
+                } while (cursor.moveToNext());
+            }
         }
-        database.close();
         return list;
     }
 
@@ -642,15 +683,16 @@ public class SQLiteHelper extends SQLiteOpenHelper {
         values.put(COLUMN_RAIN60MIN, currentWeather.getRain60min());
 
 
-        database.insert(TABLE_CURRENT_WEATHER, null, values);
-        database.close();
+        database.insertWithOnConflict(TABLE_CURRENT_WEATHER, null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
 
     public synchronized CurrentWeatherData getCurrentWeatherByCityId(int cityId) {
         SQLiteDatabase database = this.getReadableDatabase();
 
-        Cursor cursor = database.query(TABLE_CURRENT_WEATHER,
+        CurrentWeatherData currentWeather = new CurrentWeatherData();
+
+        try (Cursor cursor = database.query(TABLE_CURRENT_WEATHER,
                 new String[]{CURRENT_WEATHER_ID,
                         CURRENT_WEATHER_CITY_ID,
                         COLUMN_TIME_MEASUREMENT,
@@ -666,29 +708,25 @@ public class SQLiteHelper extends SQLiteOpenHelper {
                         COLUMN_TIMEZONE_SECONDS,
                         COLUMN_RAIN60MIN},
                 CURRENT_WEATHER_CITY_ID + " = ?",
-                new String[]{String.valueOf(cityId)}, null, null, null, null);
+                new String[]{String.valueOf(cityId)}, null, null, null, null)) {
 
-        CurrentWeatherData currentWeather = new CurrentWeatherData();
-
-        if (cursor != null && cursor.moveToFirst()) {
-            currentWeather.setId(Integer.parseInt(cursor.getString(0)));
-            currentWeather.setCity_id(Integer.parseInt(cursor.getString(1)));
-            currentWeather.setTimestamp(Long.parseLong(cursor.getString(2)));
-            currentWeather.setWeatherID(Integer.parseInt(cursor.getString(3)));
-            currentWeather.setTemperatureCurrent(Float.parseFloat(cursor.getString(4)));
-            currentWeather.setHumidity(Float.parseFloat(cursor.getString(5)));
-            currentWeather.setPressure(Float.parseFloat(cursor.getString(6)));
-            currentWeather.setWindSpeed(Float.parseFloat(cursor.getString(7)));
-            currentWeather.setWindDirection(Float.parseFloat(cursor.getString(8)));
-            currentWeather.setCloudiness(Float.parseFloat(cursor.getString(9)));
-            currentWeather.setTimeSunrise(Long.parseLong(cursor.getString(10)));
-            currentWeather.setTimeSunset(Long.parseLong(cursor.getString(11)));
-            currentWeather.setTimeZoneSeconds(Integer.parseInt(cursor.getString(12)));
-            currentWeather.setRain60min(cursor.getString(13));
-
-            cursor.close();
+            if (cursor != null && cursor.moveToFirst()) {
+                currentWeather.setId(cursor.getInt(0));
+                currentWeather.setCity_id(cursor.getInt(1));
+                currentWeather.setTimestamp(cursor.getLong(2));
+                currentWeather.setWeatherID(cursor.getInt(3));
+                currentWeather.setTemperatureCurrent(cursor.getFloat(4));
+                currentWeather.setHumidity(cursor.getFloat(5));
+                currentWeather.setPressure(cursor.getFloat(6));
+                currentWeather.setWindSpeed(cursor.getFloat(7));
+                currentWeather.setWindDirection(cursor.getFloat(8));
+                currentWeather.setCloudiness(cursor.getFloat(9));
+                currentWeather.setTimeSunrise(cursor.getLong(10));
+                currentWeather.setTimeSunset(cursor.getLong(11));
+                currentWeather.setTimeZoneSeconds(cursor.getInt(12));
+                currentWeather.setRain60min(cursor.getString(13));
+            }
         }
-        database.close();
         return currentWeather;
     }
 
@@ -718,20 +756,19 @@ public class SQLiteHelper extends SQLiteOpenHelper {
         SQLiteDatabase database = this.getWritableDatabase();
         database.delete(TABLE_CURRENT_WEATHER, CURRENT_WEATHER_ID + " = ?",
                 new String[]{Integer.toString(currentWeather.getId())});
-        database.close();
     }
 
     public synchronized void deleteCurrentWeatherByCityId(int cityId) {
         SQLiteDatabase database = this.getWritableDatabase();
         database.delete(TABLE_CURRENT_WEATHER, CURRENT_WEATHER_CITY_ID + " = ?",
                 new String[]{Integer.toString(cityId)});
-        database.close();
     }
 
     public static int getWidgetCityID(Context context) {
         SQLiteHelper db = SQLiteHelper.getInstance(context);
         int cityID=0;
         List<CityToWatch> cities = db.getAllCitiesToWatch();
+        if (cities.isEmpty()) return cityID;
         int rank=cities.get(0).getRank();
         for (int i = 0; i < cities.size(); i++) {   //find cityID for first city to watch = lowest Rank
             CityToWatch city = cities.get(i);
@@ -745,10 +782,15 @@ public class SQLiteHelper extends SQLiteOpenHelper {
     }
     public synchronized void deleteAllForecasts() {
         SQLiteDatabase database = this.getWritableDatabase();
-        database.execSQL("delete from " + TABLE_HOURLY_FORECAST);
-        database.execSQL("delete from " + TABLE_WEEKFORECAST);
-        database.execSQL("delete from " + TABLE_CURRENT_WEATHER);
-        database.execSQL("delete from " + TABLE_QUARTERHOURLYFORECAST);
-        database.close();
+        database.beginTransaction();
+        try {
+            database.execSQL("delete from " + TABLE_HOURLY_FORECAST);
+            database.execSQL("delete from " + TABLE_WEEKFORECAST);
+            database.execSQL("delete from " + TABLE_CURRENT_WEATHER);
+            database.execSQL("delete from " + TABLE_QUARTERHOURLYFORECAST);
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
+        }
     }
 }

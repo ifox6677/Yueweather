@@ -18,7 +18,7 @@ import org.zhangjq0908.weather.database.CityToWatch;
 import org.zhangjq0908.weather.database.CurrentWeatherData;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.database.WeekForecast;
-import org.zhangjq0908.weather.services.UpdateDataService;
+import org.zhangjq0908.weather.services.WeatherUpdateWorker;
 import org.zhangjq0908.weather.services.WidgetUpdater;
 import org.zhangjq0908.weather.ui.Help.StringFormatUtils;
 import org.zhangjq0908.weather.ui.UiResourceProvider;
@@ -43,7 +43,7 @@ public class WeatherWidget5day extends AppWidgetProvider {
 
             int cityID = getWidgetCityID(context);
 
-            UpdateDataService.enqueueWork(context, UpdateDataService.UPDATE_SINGLE_ACTION, cityID, true);
+            WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
         }
     }
 

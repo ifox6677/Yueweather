@@ -11,22 +11,25 @@ import android.graphics.ColorMatrixColorFilter;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
 import android.os.Bundle;
+import android.os.Build;
+import android.text.Spanned;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.osmdroid.api.IGeoPoint;
-import org.osmdroid.config.Configuration;
 
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Html;
 import android.text.method.LinkMovementMethod;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.ImageButton;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -37,7 +40,6 @@ import androidx.preference.PreferenceManager;
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
 import com.android.volley.toolbox.JsonObjectRequest;
-import com.android.volley.toolbox.Volley;
 
 import org.osmdroid.events.MapListener;
 import org.osmdroid.events.ScrollEvent;
@@ -52,6 +54,7 @@ import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
 import org.osmdroid.views.overlay.TilesOverlay;
 import org.zhangjq0908.weather.R;
+import org.zhangjq0908.weather.http.VolleySingleton;
 import org.zhangjq0908.weather.ui.Help.StringFormatUtils;
 import org.zhangjq0908.weather.ui.util.ThemeUtils;
 import org.zhangjq0908.weather.ui.util.TilesOverlayEntry;
@@ -64,6 +67,8 @@ import java.util.concurrent.TimeUnit;
 
 
 public class RainViewerActivity extends AppCompatActivity {
+
+    private static final String TAG = "RainViewer";
 
     private MapView mapView;
     private MapView mapView2;
@@ -80,8 +85,7 @@ public class RainViewerActivity extends AppCompatActivity {
     private boolean crossfadeRunning = false;
     private List<TilesOverlayEntry> radarTilesOverlayEntries;
     private GeoPoint startPoint;
-    public static int rainViewerWidgetZoom = 6;
-    public static int rainViewerAllInOneWidgetZoom = 6;
+    public static int rainViewerWidgetZoom = 7;
     public static int rainViewerMaxZoom = 11;  //max 7 starting Jan 2026
     private double initialZoom = 7d;
 
@@ -121,9 +125,6 @@ public class RainViewerActivity extends AppCompatActivity {
         mapPreload = findViewById(R.id.map_preload);
         mapPreload.setTileSource(TileSourceFactory.MAPNIK);
         mapPreload.setTilesScaledToDpi(true);
-
-        Configuration.getInstance().load(this, PreferenceManager.getDefaultSharedPreferences(this));
-        Configuration.getInstance().setUserAgentValue(getPackageName());
 
         mapView.setMultiTouchControls(true);
         mapView.getZoomController().setVisibility(CustomZoomButtonsController.Visibility.ALWAYS);
@@ -194,7 +195,7 @@ public class RainViewerActivity extends AppCompatActivity {
     radarTilesOverlayEntries = new ArrayList<>();
     licenseText = findViewById(R.id.license);
     String text = "© <a href=\"https://www.openstreetmap.org/copyright/\">OpenStreetMap</a> contributors &amp; <a href=\"https://www.rainviewer.com/api.html\">RainViewer</a>";
-    licenseText.setText(Html.fromHtml(text, Html.FROM_HTML_MODE_COMPACT));
+    licenseText.setText(fromHtmlCompat(text));
     licenseText.setMovementMethod(LinkMovementMethod.getInstance());
     }
 
@@ -202,7 +203,7 @@ public class RainViewerActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
 
-        RequestQueue queue = Volley.newRequestQueue(this);
+        RequestQueue queue = VolleySingleton.get(this);
 
         String url = "https://api.rainviewer.com/public/weather-maps.json";
         JsonObjectRequest request = new JsonObjectRequest(Request.Method.GET, url, null,
@@ -220,17 +221,22 @@ public class RainViewerActivity extends AppCompatActivity {
                         }
 
                     } catch (JSONException e) {
-                        throw new RuntimeException(e);
+                        Log.e(TAG, "Failed to parse rainviewer json", e);
+                        Toast.makeText(RainViewerActivity.this, R.string.error_fetch_forecast, Toast.LENGTH_LONG).show();
                     }
                 },
                 error -> {
                     // Handle the error
+                    Log.e(TAG, "Rainviewer request failed: " + error);
+                    Toast.makeText(RainViewerActivity.this, R.string.error_fetch_forecast, Toast.LENGTH_LONG).show();
                 });
 
         queue.add(request);
 
     }
     public void playStop(){
+
+        if (radarFrames == null || radarFrames.length() < 2) return;
 
         if (scheduledExecutorService == null || scheduledExecutorService.isShutdown()) {
 
@@ -265,7 +271,7 @@ public class RainViewerActivity extends AppCompatActivity {
     public void showFrame(int position){
         int preloadingDirection = position - animationPosition > 0 ? 1 : -1;
 
-        if (radarFrames == null || crossfadeRunning){
+        if (radarFrames == null || radarFrames.length() == 0 || crossfadeRunning){
             return;
         }
         try {
@@ -305,8 +311,8 @@ public class RainViewerActivity extends AppCompatActivity {
             final TilesOverlay newRadarPreloadOverlay = getNewRadarOverlay(preloadPosition);
             replaceLayer(mapPreload, newRadarPreloadOverlay, center, zoom);
 
-        } catch (JSONException e) {
-            throw new RuntimeException(e);
+        } catch (JSONException | NumberFormatException e) {
+            Log.e(TAG, "Failed to show radar frame", e);
         }
     }
 
@@ -393,6 +399,14 @@ public class RainViewerActivity extends AppCompatActivity {
         return new ColorMatrixColorFilter(colorMatrix);
     }
 
-}
+    private static Spanned fromHtmlCompat(String text) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY);
+        }
+        return legacyFromHtml(text);
+    }
 
-
+    @SuppressWarnings("deprecation")
+    private static Spanned legacyFromHtml(String text) {
+        return Html.fromHtml(text);
+    }}

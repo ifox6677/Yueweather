@@ -13,7 +13,7 @@ import org.zhangjq0908.weather.preferences.AppPreferencesManager;
  */
 public class OMHttpRequest {
 
-    protected String getUrlForQueryingOMweatherAPI(Context context, float lat, float lon) {
+    public String getUrlForQueryingOMweatherAPI(Context context, float lat, float lon) {
         AppPreferencesManager prefManager =
                 new AppPreferencesManager(PreferenceManager.getDefaultSharedPreferences(context));
         SharedPreferences sharedPreferences=PreferenceManager.getDefaultSharedPreferences(context);

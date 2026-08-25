@@ -50,17 +50,18 @@ import java.util.Locale;
 
 public class ForecastCityActivity extends NavigationActivity implements IUpdateableCityUI {
     private WeatherPagerAdapter pagerAdapter;
-    private static LocationListener locationListenerGPS;
+    private LocationListener locationListenerGPS;
     private LocationManager locationManager;
-    private static MenuItem updateLocationButton;
-    private static MenuItem refreshActionButton;
+    private String locationProvider = LocationManager.GPS_PROVIDER;
+    private MenuItem updateLocationButton;
+    private MenuItem refreshActionButton;
     private MenuItem rainviewerButton;
 
     private int cityId = -1;
     private ViewPager2 viewPager2;
     private TabLayout tabLayout;
     private TextView noCityText;
-    private static Boolean isRefreshing = false;
+    private Boolean isRefreshing = false;
     Context context;
 
     @Override
@@ -156,7 +157,10 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
         SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         updateLocationButton = menu.findItem(R.id.menu_update_location);
         SQLiteHelper db = SQLiteHelper.getInstance(this);
-        if(prefManager.getBoolean("pref_GPS", false)==TRUE && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ) {
+        boolean fineLocationGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean coarseLocationGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        locationProvider = fineLocationGranted ? LocationManager.GPS_PROVIDER : LocationManager.NETWORK_PROVIDER;
+        if(prefManager.getBoolean("pref_GPS", false)==TRUE && (fineLocationGranted || coarseLocationGranted)) {
             updateLocationButton.setVisible(true);
             updateLocationButton.setActionView(R.layout.menu_update_location_view);
             updateLocationButton.getActionView().clearAnimation();
@@ -164,7 +168,7 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
                 removeLocationListener();
                 if (!db.getAllCitiesToWatch().isEmpty()) {  //if city has not been removed continue location update
                     locationListenerGPS=getNewLocationListener();
-                    locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, locationListenerGPS);
+                    locationManager.requestLocationUpdates(locationProvider, 1000, 0, locationListenerGPS);
                     if (updateLocationButton != null && updateLocationButton.getActionView() != null) {
                         startUpdateLocatationAnimation();
                     }
@@ -235,11 +239,16 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
         }else if (id==R.id.menu_refresh){
             if (!db.getAllCitiesToWatch().isEmpty()) {  //only if at least one city is watched, otherwise crash
                 WeatherPagerAdapter.refreshSingleData(getApplicationContext(),true, pagerAdapter.getCityIDForPos(viewPager2.getCurrentItem()));
-                ForecastCityActivity.startRefreshAnimation();
+                startRefreshAnimation();
             }
         } else if (id==R.id.menu_update_location) {
             locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-            if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)){
+            boolean fineGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            boolean coarseGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            locationProvider = fineGranted ? LocationManager.GPS_PROVIDER : LocationManager.NETWORK_PROVIDER;
+            if (!fineGranted && !coarseGranted){
+                Toast.makeText(this,R.string.error_no_position,Toast.LENGTH_LONG).show();
+            } else if (!locationManager.isProviderEnabled(locationProvider)){
                 Toast.makeText(this,R.string.error_no_gps,Toast.LENGTH_LONG).show();
             } else {
                 if (db.getAllCitiesToWatch().isEmpty()) {
@@ -253,12 +262,12 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
                     tabLayoutMediator.attach();
                 }
                 SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-                if (prefManager.getBoolean("pref_GPS", false) == TRUE && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                if (prefManager.getBoolean("pref_GPS", false) == TRUE && (fineGranted || coarseGranted)) {
                     if (locationListenerGPS == null) {
                         Log.d("GPS", "Listener null");
                         locationListenerGPS = getNewLocationListener();
-                        ForecastCityActivity.startUpdateLocatationAnimation();
-                        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, locationListenerGPS);
+                        startUpdateLocatationAnimation();
+                        locationManager.requestLocationUpdates(locationProvider, 1000, 0, locationListenerGPS);
                     }
                 }
             }
@@ -288,14 +297,14 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
         stopRefreshAnimation();
     }
 
-    public static void stopRefreshAnimation(){
+    public void stopRefreshAnimation(){
         if (refreshActionButton != null && refreshActionButton.getActionView() != null) {
             refreshActionButton.getActionView().clearAnimation();
         }
         isRefreshing = false;
     }
 
-    public static void startRefreshAnimation(){
+    public void startRefreshAnimation(){
         isRefreshing = true;
         if(refreshActionButton !=null && refreshActionButton.getActionView() != null) {
             RotateAnimation rotate = new RotateAnimation(0, 360, Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
@@ -326,7 +335,7 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
         }
     }
 
-    public static void startUpdateLocatationAnimation(){
+    public void startUpdateLocatationAnimation(){
         {
             if(updateLocationButton !=null && updateLocationButton.getActionView() != null) {
                 Animation blink = new AlphaAnimation(1, 0); // Change alpha from fully visible to invisible

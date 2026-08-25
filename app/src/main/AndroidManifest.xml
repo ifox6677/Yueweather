@@ -8,13 +8,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- For requesting background location access on Android 10 (API level 29+)-->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".WeatherApplication"
         android:allowBackup="true"
-        android:requestLegacyExternalStorage="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -50,16 +48,6 @@
             android:label="@string/app_name"
             android:theme="@style/AppTheme.NoActionBar" />
         <activity
-            android:name="org.zhangjq0908.weather.activities.AboutActivity"
-            android:label="@string/about"
-            android:parentActivityName="org.zhangjq0908.weather.activities.ForecastCityActivity"
-            android:theme="@style/AppTheme.NoActionBar">
-            <meta-data
-                android:name="android.support.PARENT_ACTIVITY"
-                android:value="org.zhangjq0908.weather.activities.ForecastCityActivity" />
-        </activity>
-
-        <activity
             android:name="org.zhangjq0908.weather.activities.SettingsActivity"
             android:label="@string/activity_settings_title"
             android:parentActivityName="org.zhangjq0908.weather.activities.ForecastCityActivity"
@@ -70,16 +58,11 @@
 
         </activity>
 
-
         <activity
-            android:name="org.zhangjq0908.weather.activities.BackupRestoreActivity"
-            android:label="@string/activity_backuprestore"
-            android:parentActivityName="org.zhangjq0908.weather.activities.ForecastCityActivity"
-            android:theme="@style/AppTheme.NoActionBar">
-            <meta-data
-                android:name="android.support.PARENT_ACTIVITY"
-                android:value="org.zhangjq0908.weather.activities.ForecastCityActivity" />
-        </activity>
+            android:name="org.zhangjq0908.weather.activities.AboutActivity"
+            android:label="@string/activity_about"
+            android:theme="@style/AppTheme.NoActionBar" />
+
 
         <activity
             android:name="org.zhangjq0908.weather.firststart.TutorialActivity"

@@ -31,10 +31,11 @@ public final class WeatherSyncScheduler {
 
         long intervalMinutes = getIntervalMinutes(context);
         PeriodicWorkRequest periodicRequest =
-                new PeriodicWorkRequest.Builder(WeatherSyncWorker.class, intervalMinutes, TimeUnit.MINUTES)
+                new PeriodicWorkRequest.Builder(WeatherUpdateWorker.class, intervalMinutes, TimeUnit.MINUTES)
                         .setConstraints(constraints)
                         .build();
 
+        //UPDATE refreshes the spec (e.g. changed interval) without resetting the periodic schedule
         workManager.enqueueUniquePeriodicWork(
                 PERIODIC_WORK_NAME,
                 ExistingPeriodicWorkPolicy.UPDATE,
@@ -43,7 +44,7 @@ public final class WeatherSyncScheduler {
 
         if (runImmediately) {
             OneTimeWorkRequest oneTimeRequest =
-                    new OneTimeWorkRequest.Builder(WeatherSyncWorker.class)
+                    new OneTimeWorkRequest.Builder(WeatherUpdateWorker.class)
                             .setConstraints(constraints)
                             .build();
             workManager.enqueueUniqueWork(

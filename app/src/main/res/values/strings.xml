@@ -55,8 +55,8 @@
     <string name="settings_interval_half">30 min</string>
     <string name="settings_interval_45">45 min</string>
     <string name="settings_interval_60">60 min</string>
-    <string name="settings_interval_120">2 h</string>
-    <string name="settings_interval_180">3 h</string>
+    <string name="settings_interval_one">1 h</string>
+    <string name="settings_interval_two">2 h</string>
     <string name="settings_interval_six">6 h</string>
     <string name="settings_interval_twelve">12 h</string>
     <string name="settings_interval_twentyfour">24 h</string>
@@ -129,12 +129,6 @@
     <string name="settings_widget_transparency">Widget transparency</string>
     <string name="units_mi">mi</string>
     <string name="GridLayout">2 columns</string>
-    <string name="activity_backuprestore">Backup/Restore</string>
-    <string name="backup_database">Backup database</string>
-    <string name="restore_database">Restore database</string>
-    <string name="permission_required">Permission required</string>
-    <string name="permission_message">%s needs access to external storage. Please accept permission and try again.</string>
-    <string name="toast_delete">Please delete file and try again</string>
-    <string name="restore_database_message">Restore Data from Documents folder. Open folder \'Documents\' and select Cirrus.zip if needed!</string>
     <string name="settings_show_hourly_uv_index">Show hourly UV index</string>
+	<string name="card_empty_no_data">No data yet. Pull down to refresh.</string>
 </resources>

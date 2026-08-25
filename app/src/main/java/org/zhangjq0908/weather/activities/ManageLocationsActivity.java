@@ -53,7 +53,7 @@ public class ManageLocationsActivity extends NavigationActivity {
             Collections.sort(cities, new Comparator<CityToWatch>() {
                 @Override
                 public int compare(CityToWatch o1, CityToWatch o2) {
-                    return o1.getRank() - o2.getRank();
+                    return Integer.compare(o1.getRank(), o2.getRank());
                 }
 
             });

@@ -37,7 +37,7 @@
 
     <string name="about_license_text" translatable="false">
         粤天气\n
-        西河不准科技构建
+        张金钱构建
     </string>
 
     <string name="about_more_info">更多信息请访问：</string>
@@ -84,10 +84,8 @@
 
     <string name="settings_interval_quarter">15 分钟</string>
     <string name="settings_interval_half">30 分钟</string>
-    <string name="settings_interval_45">45 分钟</string>
-    <string name="settings_interval_60">1 小时</string>
-    <string name="settings_interval_120">2 小时</string>
-    <string name="settings_interval_180">3 小时</string>	
+    <string name="settings_interval_one">1 小时</string>
+    <string name="settings_interval_two">2 小时</string>
     <string name="settings_interval_six">6 小时</string>
     <string name="settings_interval_twelve">12 小时</string>
     <string name="settings_interval_twentyfour">24 小时</string>
@@ -209,21 +207,8 @@
 
     <string name="GridLayout">2 列</string>
 
-    <string name="activity_backuprestore">备份 / 恢复</string>
-    <string name="backup_database">备份数据库</string>
-    <string name="restore_database">恢复数据库</string>
-
-    <string name="permission_required">需要权限</string>
-    <string name="permission_message">
-        %s 需要访问外部存储权限，请授权后重试。
-    </string>
-
-    <string name="toast_delete">请删除文件后再试</string>
-    <string name="restore_database_message">
-        从 Documents 文件夹恢复数据。如有需要，请选择 Cirrus.zip。
-    </string>
-
     <string name="settings_show_hourly_uv_index">
         显示逐小时紫外线指数
     </string>
+	<string name="card_empty_no_data">暂无数据，下拉刷新</string>
 </resources>

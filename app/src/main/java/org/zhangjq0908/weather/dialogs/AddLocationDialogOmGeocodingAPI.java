@@ -6,7 +6,9 @@ import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.res.Resources;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -17,7 +19,9 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.AdapterView;
 import android.widget.AutoCompleteTextView;
 import android.widget.Toast;
@@ -109,13 +113,36 @@ public class AddLocationDialogOmGeocodingAPI extends DialogFragment {
         builder.setTitle(activity.getString(R.string.dialog_add_label));
 
         this.database = SQLiteHelper.getInstance(activity);
-
-
         webview = rootView.findViewById(R.id.webViewAddLocation);
         webview.getSettings().setJavaScriptEnabled(true);
+        webview.getSettings().setAllowFileAccess(false);  //android_asset pages stay reachable, real file:// access is blocked
+        webview.getSettings().setAllowContentAccess(false);
         webview.getSettings().setUserAgentString(BuildConfig.APPLICATION_ID+"/"+BuildConfig.VERSION_NAME);
         webview.setBackgroundColor(0x00000000);
         webview.setBackgroundResource(R.drawable.map_back);
+        webview.setWebViewClient(new WebViewClient() {
+            private boolean handleUrl(String url) {
+                if (url != null && !url.startsWith("file:///android_asset/")) {  //route external links to the browser
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                    } catch (Exception ignored) {
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleUrl(String.valueOf(request.getUrl()));
+            }
+
+            @SuppressWarnings("deprecation")
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleUrl(url);
+            }
+        });
 
         autoCompleteTextView = (AutoCompleteTextView) rootView.findViewById(R.id.autoCompleteTvAddDialog);
 
@@ -190,7 +217,15 @@ public class AddLocationDialogOmGeocodingAPI extends DialogFragment {
 
         builder.setNegativeButton(activity.getString(R.string.dialog_add_close_button), null);
 
-        return builder.create();
+        AlertDialog dialog = builder.create();
+        dialog.setOnDismissListener(d -> {
+            if (webview != null) {  //release the renderer process
+                webview.loadUrl("about:blank");
+                webview.destroy();
+                webview = null;
+            }
+        });
+        return dialog;
 
     }
     private void makeApiCall(String text) {
