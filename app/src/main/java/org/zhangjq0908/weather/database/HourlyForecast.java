@@ -69,6 +69,14 @@ public class HourlyForecast {
     }
 
     /**
+     * Avoids the per-row DB lookup for the timezone when the caller already
+     * knows it (e.g. widget render loops over many forecasts).
+     */
+    public long getLocalForecastTime(int timeZoneSeconds) {
+        return forecastFor + timeZoneSeconds * 1000L;
+    }
+
+    /**
      * @param forecastFor The point of time for the forecast.
      */
     public void setForecastTime(long forecastFor) {

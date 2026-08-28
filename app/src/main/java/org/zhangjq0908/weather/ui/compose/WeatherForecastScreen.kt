@@ -96,7 +96,8 @@ fun WeatherForecastScreen(
             OverviewCard(
                 currentWeather = currentWeather,
                 hourly = hourlyForecasts,
-                quarterHourly = quarterHourly
+                quarterHourly = quarterHourly,
+                cityLatitude = cityLatitude
             )
         }
 

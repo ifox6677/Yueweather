@@ -29,10 +29,11 @@ fun OverviewCard(
     currentWeather: CurrentWeatherData,
     hourly: List<HourlyForecast>,
     quarterHourly: List<QuarterHourlyForecast>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    cityLatitude: Float = 0f
 ) {
     val context = LocalContext.current
-    val isDay = currentWeather.isDay(context)
+    val isDay = currentWeather.isDay(context, cityLatitude)
 
     // tick every 30s so time-dependent selections ("now cast") recompose
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }

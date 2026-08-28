@@ -87,6 +87,7 @@ public class RainViewerActivity extends AppCompatActivity {
     private GeoPoint startPoint;
     public static int rainViewerWidgetZoom = 7;
     public static int rainViewerMaxZoom = 11;  //max 7 starting Jan 2026
+    private static final int MAX_CACHED_RADAR_FRAMES = 15;
     private double initialZoom = 7d;
 
     @Override
@@ -384,6 +385,11 @@ public class RainViewerActivity extends AppCompatActivity {
         newOverlay.setColorFilter(filter);
         TilesOverlayEntry newEntry = new TilesOverlayEntry(newOverlay,time);
         radarTilesOverlayEntries.add(newEntry);
+        //keep the cache bounded - old frames are only needed for playback, so
+        //drop the oldest once it grows past a small recent window to bound memory
+        if (radarTilesOverlayEntries.size() > MAX_CACHED_RADAR_FRAMES) {
+            radarTilesOverlayEntries.remove(0);
+        }
         return newOverlay;
     }
 

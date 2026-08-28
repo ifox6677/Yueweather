@@ -62,11 +62,15 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
     private TabLayout tabLayout;
     private TextView noCityText;
     private Boolean isRefreshing = false;
+    private TabLayoutMediator tabLayoutMediator;
     Context context;
 
     @Override
     protected void onPause() {
         super.onPause();
+
+        //detach the mediator so re-entering onResume does not stack a second one
+        if (tabLayoutMediator != null) tabLayoutMediator.detach();
 
         ViewUpdater.removeSubscriber(this);
         ViewUpdater.removeSubscriber(pagerAdapter);
@@ -87,7 +91,8 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
             viewPager2.setVisibility(View.VISIBLE);
             pagerAdapter.loadCities();
             viewPager2.setAdapter(pagerAdapter);
-            TabLayoutMediator tabLayoutMediator = new TabLayoutMediator(tabLayout, viewPager2,false,false, (tab, position) -> tab.setText(pagerAdapter.getPageTitle(position)));
+            if (tabLayoutMediator != null) tabLayoutMediator.detach();  //defensive in case onPause was not hit
+            tabLayoutMediator = new TabLayoutMediator(tabLayout, viewPager2,false,false, (tab, position) -> tab.setText(pagerAdapter.getPageTitle(position)));
             tabLayoutMediator.attach();
         }
 
@@ -258,7 +263,8 @@ public class ForecastCityActivity extends NavigationActivity implements IUpdatea
                     noCityText.setVisibility(View.GONE);
                     viewPager2.setVisibility(View.VISIBLE);
                     viewPager2.setAdapter(pagerAdapter);
-                    TabLayoutMediator tabLayoutMediator = new TabLayoutMediator(tabLayout, viewPager2, false, false, (tab, position) -> tab.setText(pagerAdapter.getPageTitle(position)));
+                    if (tabLayoutMediator != null) tabLayoutMediator.detach();  //reuse the field so no mediator stacks up
+                    tabLayoutMediator = new TabLayoutMediator(tabLayout, viewPager2, false, false, (tab, position) -> tab.setText(pagerAdapter.getPageTitle(position)));
                     tabLayoutMediator.attach();
                 }
                 SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());

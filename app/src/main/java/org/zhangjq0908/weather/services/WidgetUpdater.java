@@ -11,20 +11,29 @@ import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
+import org.zhangjq0908.weather.R;
+
 import java.util.List;
 
 public class WidgetUpdater extends Worker {
-    private Context mContext;
+    private static final String TAG = "WidgetUpdater";
+
     public WidgetUpdater(
             @NonNull Context context,
             @NonNull WorkerParameters params) {
         super(context, params);
-        mContext = context;
     }
 
     @Override
     public Result doWork() {
-        // Do the work here--in this case, upload the images.
+        if (isStopped()) return Result.failure();
+
+        //watchdog: if background sync has stalled, force it before re-rendering
+        WeatherSyncScheduler.checkWatchdog(getApplicationContext());
+
+        // Runs as regular background WorkManager work. This task only re-renders
+        // widgets from the database (no long-running network), so it does not
+        // need a foreground service notification.
         AppWidgetManager appWidgetManager = AppWidgetManager.getInstance(getApplicationContext());
         List<AppWidgetProviderInfo> providers = appWidgetManager.getInstalledProviders();
 
@@ -32,7 +41,7 @@ public class WidgetUpdater extends Worker {
             ComponentName provider = info.provider;
             if (provider.getPackageName().equals(getApplicationContext().getPackageName())) {
                 int[] widgetIds = appWidgetManager.getAppWidgetIds(provider);
-                Log.d("WidgetUpdater",provider.getClassName() + widgetIds.length);
+                Log.d(TAG, provider.getClassName() + widgetIds.length);
                 Intent intent = new Intent();
                 intent.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
                 intent.setComponent(provider); // this is the ComponentName

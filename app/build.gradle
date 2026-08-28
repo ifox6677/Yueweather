@@ -35,7 +35,7 @@ android {
         minSdk 28
         targetSdk 35
         versionCode 39
-        versionName "0.6.8"
+        versionName "0.6.19"
 
         buildConfigField "String", "BASE_URL", "\"https://api.open-meteo.com/v1/\""
         buildConfigField "String", "GITHUB_URL","\"https://github.com/ifox6677/Yueweather/\""
@@ -77,6 +77,8 @@ dependencies {
     implementation libs.androidx.cardview
     implementation libs.osmdroid.android
     implementation libs.androidx.work.runtime
+    implementation libs.androidx.work.runtime.ktx
+    implementation libs.kotlinx.coroutines.android
 
     testImplementation libs.junit
     testImplementation libs.org.json

@@ -114,12 +114,23 @@ public class CurrentWeatherData {
     }
 
     public boolean isDay(Context context){
+        return isDay(context, 0f);
+    }
+
+    /**
+     * Day/night decision. The DB lookup for the city latitude is avoided by
+     * passing the latitude in - the latitude is only consulted for the polar
+     * day/night heuristic (sunrise==sunset), so this keeps hot render paths off
+     * the main thread's DB. A latitude of 0 is treated as the northern hemisphere
+     * only when the caller supplies it; callers pass the real value.
+     */
+    public boolean isDay(Context context, float cityLatitude){
         Calendar currentTime = Calendar.getInstance();
         currentTime.setTimeZone(TimeZone.getTimeZone("GMT"));
         currentTime.setTimeInMillis(System.currentTimeMillis() + timeZoneSeconds* 1000L);
-        SQLiteHelper dbHelper = SQLiteHelper.getInstance(context);
         if ((timeSunrise - timeSunset) % 86400 == 0){
-            if ((dbHelper.getCityToWatch(city_id).getLatitude())>0){  //northern hemisphere
+            //latitude 0 (equator / unknown default) is treated as northern - a safer fallback
+            if (cityLatitude >= 0){  //northern hemisphere
                 return currentTime.get(Calendar.DAY_OF_YEAR) >= 80 && currentTime.get(Calendar.DAY_OF_YEAR) <= 265;  //from March 21 to September 22 (incl)
             }else{ //southern hemisphere
                 return currentTime.get(Calendar.DAY_OF_YEAR) < 80 || currentTime.get(Calendar.DAY_OF_YEAR) > 265;

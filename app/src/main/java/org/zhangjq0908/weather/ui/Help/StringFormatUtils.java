@@ -3,6 +3,8 @@ package org.zhangjq0908.weather.ui.Help;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
+import android.icu.util.ChineseCalendar;
+import android.icu.util.ULocale;
 import androidx.preference.PreferenceManager;
 
 import androidx.core.content.res.ResourcesCompat;
@@ -85,6 +87,25 @@ public final class StringFormatUtils {
         java.text.DateFormat df = java.text.DateFormat.getDateInstance(DateFormat.SHORT);
         df.setTimeZone(TimeZone.getTimeZone("GMT"));
         return df.format(time);
+    }
+
+    private static final String[] LUNAR_MONTHS = {"正月","二月","三月","四月","五月","六月","七月","八月","九月","十月","冬月","腊月"};
+    private static final String[] LUNAR_DAYS = {"初一","初二","初三","初四","初五","初六","初七","初八","初九","初十",
+            "十一","十二","十三","十四","十五","十六","十七","十八","十九","二十",
+            "廿一","廿二","廿三","廿四","廿五","廿六","廿七","廿八","廿九","三十"};
+
+    /**
+     * Formats the given time (already shifted to the target time zone, interpreted in GMT,
+     * following the widget time convention) as Chinese lunar date, e.g. "七月十六" or "闰四月初五".
+     */
+    public static String formatLunarDate(long time) {
+        ChineseCalendar chinese = new ChineseCalendar(android.icu.util.TimeZone.getTimeZone("GMT"), ULocale.CHINESE);
+        chinese.setTimeInMillis(time);
+        int month = chinese.get(ChineseCalendar.MONTH);               // 0-based
+        int day = chinese.get(ChineseCalendar.DAY_OF_MONTH) - 1;      // array index
+        boolean isLeapMonth = chinese.get(ChineseCalendar.IS_LEAP_MONTH) == 1;
+        if (month < 0 || month >= LUNAR_MONTHS.length || day < 0 || day >= LUNAR_DAYS.length) return "";
+        return (isLeapMonth ? "闰" : "") + LUNAR_MONTHS[month] + LUNAR_DAYS[day];
     }
 
     public static String formatWindSpeed(Context context, float wind_speed) {

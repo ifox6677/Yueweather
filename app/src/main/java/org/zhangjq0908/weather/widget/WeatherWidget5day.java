@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.RemoteViews;
 
 import org.zhangjq0908.weather.R;
@@ -18,8 +19,8 @@ import org.zhangjq0908.weather.database.CityToWatch;
 import org.zhangjq0908.weather.database.CurrentWeatherData;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.database.WeekForecast;
+import org.zhangjq0908.weather.services.WeatherSyncScheduler;
 import org.zhangjq0908.weather.services.WeatherUpdateWorker;
-import org.zhangjq0908.weather.services.WidgetUpdater;
 import org.zhangjq0908.weather.ui.Help.StringFormatUtils;
 import org.zhangjq0908.weather.ui.UiResourceProvider;
 import static org.zhangjq0908.weather.database.SQLiteHelper.getWidgetCityID;
@@ -27,12 +28,8 @@ import static org.zhangjq0908.weather.database.SQLiteHelper.getWidgetCityID;
 import java.util.Calendar;
 import java.util.List;
 import java.util.TimeZone;
-import java.util.concurrent.TimeUnit;
 
 import androidx.preference.PreferenceManager;
-import androidx.work.ExistingPeriodicWorkPolicy;
-import androidx.work.PeriodicWorkRequest;
-import androidx.work.WorkManager;
 
 public class WeatherWidget5day extends AppWidgetProvider {
 
@@ -43,36 +40,57 @@ public class WeatherWidget5day extends AppWidgetProvider {
 
             int cityID = getWidgetCityID(context);
 
-            WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
+            WeatherSyncScheduler.ensureScheduledGuarded(context.getApplicationContext());
+            if (WeatherSyncScheduler.isWidgetDataStale(context, 1.5)) {
+                WeatherUpdateWorker.enqueueCityUpdateForce(context, cityID);
+            } else {
+                WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
+            }
         }
     }
 
 
     public static void updateView(Context context, AppWidgetManager appWidgetManager, RemoteViews views, int appWidgetId, CityToWatch city, List<WeekForecast> weekforecasts) {
+        if (weekforecasts == null || weekforecasts.isEmpty()) return;  //no forecast data - nothing to render
+
         SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
         views.setInt(R.id.widget_background,"setAlpha",  (int) ((100.0f - prefManager.getInt("pref_WidgetTransparency", 0)) * 255 / 100.0f));
         int cityId=getWidgetCityID(context);
         SQLiteHelper database = SQLiteHelper.getInstance(context.getApplicationContext());
-        int zonemilliseconds = database.getCurrentWeatherByCityId(cityId).getTimeZoneSeconds()*1000;
         CurrentWeatherData currentWeather = database.getCurrentWeatherByCityId(cityId);
+        if (currentWeather == null) return;  //data not ready yet - nothing to render
+        int zonemilliseconds = currentWeather.getTimeZoneSeconds()*1000;
+        float latitude = database.getCityToWatch(cityId) != null ? database.getCityToWatch(cityId).getLatitude() : 0f;
 
         Calendar c = Calendar.getInstance();
         c.setTimeZone(TimeZone.getTimeZone("GMT"));
 
+        int n = Math.min(5, weekforecasts.size());
         int []forecastData = new int[5];
         boolean[] isDay = new boolean[5];
         String []weekday = new String[5];
-        for (int i=0;i<5;i++){
+        for (int i=0;i<n;i++){
             c.setTimeInMillis(weekforecasts.get(i).getForecastTime()+zonemilliseconds);
 
             if ((currentWeather.getTimeSunrise() - currentWeather.getTimeSunset()) % 86400 == 0) {
-                if ((database.getCityToWatch(cityId).getLatitude()) > 0) {  //northern hemisphere
+                if (latitude > 0) {  //northern hemisphere
                     isDay[i] = c.get(Calendar.DAY_OF_YEAR) >= 80 && c.get(Calendar.DAY_OF_YEAR) <= 265;  //from March 21 to September 22 (incl)
                 } else { //southern hemisphere
                     isDay[i] = c.get(Calendar.DAY_OF_YEAR) < 80 || c.get(Calendar.DAY_OF_YEAR) > 265;
                 }
             } else {
-                isDay[i] = true;
+                //real sunrise/sunset available - judge day/night from that day's window
+                Calendar sunRise = Calendar.getInstance();
+                sunRise.setTimeZone(TimeZone.getTimeZone("GMT"));
+                sunRise.setTimeInMillis(currentWeather.getTimeSunrise() * 1000 + zonemilliseconds);
+                sunRise.set(Calendar.DAY_OF_YEAR, c.get(Calendar.DAY_OF_YEAR));
+                sunRise.set(Calendar.YEAR, c.get(Calendar.YEAR));
+                Calendar sunSet = Calendar.getInstance();
+                sunSet.setTimeZone(TimeZone.getTimeZone("GMT"));
+                sunSet.setTimeInMillis(currentWeather.getTimeSunset() * 1000 + zonemilliseconds);
+                sunSet.set(Calendar.DAY_OF_YEAR, c.get(Calendar.DAY_OF_YEAR));
+                sunSet.set(Calendar.YEAR, c.get(Calendar.YEAR));
+                isDay[i] = c.after(sunRise) && c.before(sunSet);
             }
 
             int day = c.get(Calendar.DAY_OF_WEEK);
@@ -82,35 +100,24 @@ public class WeatherWidget5day extends AppWidgetProvider {
 
         }
 
-        views.setImageViewResource(R.id.widget_5day_image1, UiResourceProvider.getIconResourceForWeatherCategory(forecastData[0], isDay[0]));
-        views.setImageViewResource(R.id.widget_5day_image2, UiResourceProvider.getIconResourceForWeatherCategory(forecastData[1], isDay[1]));
-        views.setImageViewResource(R.id.widget_5day_image3, UiResourceProvider.getIconResourceForWeatherCategory(forecastData[2], isDay[2]));
-        views.setImageViewResource(R.id.widget_5day_image4, UiResourceProvider.getIconResourceForWeatherCategory(forecastData[3], isDay[3]));
-        views.setImageViewResource(R.id.widget_5day_image5, UiResourceProvider.getIconResourceForWeatherCategory(forecastData[4], isDay[4]));
+        int[] imageIds = {R.id.widget_5day_image1, R.id.widget_5day_image2, R.id.widget_5day_image3, R.id.widget_5day_image4, R.id.widget_5day_image5};
+        int[] windIds  = {R.id.widget_5day_wind1, R.id.widget_5day_wind2, R.id.widget_5day_wind3, R.id.widget_5day_wind4, R.id.widget_5day_wind5};
+        int[] dayIds   = {R.id.widget_5day_day1, R.id.widget_5day_day2, R.id.widget_5day_day3, R.id.widget_5day_day4, R.id.widget_5day_day5};
+        int[] tempMaxIds = {R.id.widget_5day_temp_max1, R.id.widget_5day_temp_max2, R.id.widget_5day_temp_max3, R.id.widget_5day_temp_max4, R.id.widget_5day_temp_max5};
+        int[] tempMinIds = {R.id.widget_5day_temp_min1, R.id.widget_5day_temp_min2, R.id.widget_5day_temp_min3, R.id.widget_5day_temp_min4, R.id.widget_5day_temp_min5};
 
-        views.setTextViewText(R.id.widget_5day_day1,weekday[0]);
-        views.setTextViewText(R.id.widget_5day_day2,weekday[1]);
-        views.setTextViewText(R.id.widget_5day_day3,weekday[2]);
-        views.setTextViewText(R.id.widget_5day_day4,weekday[3]);
-        views.setTextViewText(R.id.widget_5day_day5,weekday[4]);
-
-        views.setTextViewText(R.id.widget_5day_temp_max1, StringFormatUtils.formatTemperature(context,weekforecasts.get(0).getMaxTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_max2, StringFormatUtils.formatTemperature(context,weekforecasts.get(1).getMaxTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_max3, StringFormatUtils.formatTemperature(context,weekforecasts.get(2).getMaxTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_max4, StringFormatUtils.formatTemperature(context,weekforecasts.get(3).getMaxTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_max5, StringFormatUtils.formatTemperature(context,weekforecasts.get(4).getMaxTemperature()));
-
-        views.setTextViewText(R.id.widget_5day_temp_min1, StringFormatUtils.formatTemperature(context,weekforecasts.get(0).getMinTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_min2, StringFormatUtils.formatTemperature(context,weekforecasts.get(1).getMinTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_min3, StringFormatUtils.formatTemperature(context,weekforecasts.get(2).getMinTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_min4, StringFormatUtils.formatTemperature(context,weekforecasts.get(3).getMinTemperature()));
-        views.setTextViewText(R.id.widget_5day_temp_min5, StringFormatUtils.formatTemperature(context,weekforecasts.get(4).getMinTemperature()));
-
-        views.setImageViewResource(R.id.widget_5day_wind1,StringFormatUtils.colorWindSpeedWidget(weekforecasts.get(0).getWind_speed()));
-        views.setImageViewResource(R.id.widget_5day_wind2,StringFormatUtils.colorWindSpeedWidget(weekforecasts.get(1).getWind_speed()));
-        views.setImageViewResource(R.id.widget_5day_wind3,StringFormatUtils.colorWindSpeedWidget(weekforecasts.get(2).getWind_speed()));
-        views.setImageViewResource(R.id.widget_5day_wind4,StringFormatUtils.colorWindSpeedWidget(weekforecasts.get(3).getWind_speed()));
-        views.setImageViewResource(R.id.widget_5day_wind5,StringFormatUtils.colorWindSpeedWidget(weekforecasts.get(4).getWind_speed()));
+        for (int j=0;j<5;j++){
+            if (j < n) {
+                views.setImageViewResource(imageIds[j], UiResourceProvider.getIconResourceForWeatherCategory(forecastData[j], isDay[j]));
+                views.setTextViewText(dayIds[j], weekday[j]);
+                views.setTextViewText(tempMaxIds[j], StringFormatUtils.formatTemperature(context, weekforecasts.get(j).getMaxTemperature()));
+                views.setTextViewText(tempMinIds[j], StringFormatUtils.formatTemperature(context, weekforecasts.get(j).getMinTemperature()));
+                views.setImageViewResource(windIds[j], StringFormatUtils.colorWindSpeedWidget(weekforecasts.get(j).getWind_speed()));
+                for (int r = 0; r < 5; r++) views.setViewVisibility(dayRowId(j, r), View.VISIBLE);
+            } else {
+                for (int r = 0; r < 5; r++) views.setViewVisibility(dayRowId(j, r), View.INVISIBLE);
+            }
+        }
 
         Intent intent2 = new Intent(context, ForecastCityActivity.class);
         intent2.putExtra("cityId", getWidgetCityID(context));
@@ -126,6 +133,17 @@ public class WeatherWidget5day extends AppWidgetProvider {
         appWidgetManager.updateAppWidget(appWidgetId, views);
     }
 
+    private static int dayRowId(int dayIndex, int element) {
+        int[][] rows = {
+                {R.id.widget_5day_day1, R.id.widget_5day_image1, R.id.widget_5day_wind1, R.id.widget_5day_temp_max1, R.id.widget_5day_temp_min1},
+                {R.id.widget_5day_day2, R.id.widget_5day_image2, R.id.widget_5day_wind2, R.id.widget_5day_temp_max2, R.id.widget_5day_temp_min2},
+                {R.id.widget_5day_day3, R.id.widget_5day_image3, R.id.widget_5day_wind3, R.id.widget_5day_temp_max3, R.id.widget_5day_temp_min3},
+                {R.id.widget_5day_day4, R.id.widget_5day_image4, R.id.widget_5day_wind4, R.id.widget_5day_temp_max4, R.id.widget_5day_temp_min4},
+                {R.id.widget_5day_day5, R.id.widget_5day_image5, R.id.widget_5day_wind5, R.id.widget_5day_temp_max5, R.id.widget_5day_temp_min5}
+        };
+        return rows[dayIndex][element];
+    }
+
     @Override
     public void onAppWidgetOptionsChanged(Context context, AppWidgetManager appWidgetManager, int appWidgetId, Bundle newOptions) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions);
@@ -133,13 +151,6 @@ public class WeatherWidget5day extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
-        PeriodicWorkRequest widgetUpdateRequest =
-                new PeriodicWorkRequest.Builder(WidgetUpdater.class,
-                        6, TimeUnit.HOURS)
-                        .build();
-        WorkManager
-                .getInstance(context)
-                .enqueueUniquePeriodicWork("widgetUpdateWork5Day", ExistingPeriodicWorkPolicy.KEEP, widgetUpdateRequest);  //KEEP makes sure it is only initialized once
 
         // There may be multiple widgets active, so update all of them
         for (int appWidgetId : appWidgetIds) {

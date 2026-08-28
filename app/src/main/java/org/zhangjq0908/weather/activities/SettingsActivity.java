@@ -16,6 +16,7 @@ import androidx.preference.PreferenceManager;
 import androidx.preference.SeekBarPreference;
 
 import org.zhangjq0908.weather.R;
+import org.zhangjq0908.weather.database.DatabaseExecutor;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.services.WeatherSyncScheduler;
 import org.zhangjq0908.weather.ui.util.ThemeUtils;
@@ -109,8 +110,11 @@ public class SettingsActivity extends NavigationActivity implements SharedPrefer
                 }
             }
         } else if (s.equals("pref_apparentTemp") || s.equals("pref_showPressure") || s.equals("pref_showHourlyUvIndex") || s.equals("pref_snow")) {
-            SQLiteHelper database = SQLiteHelper.getInstance(getApplicationContext().getApplicationContext());
-            database.deleteAllForecasts();
+            //deleting all forecasts is a large transaction - do it off the main thread
+            DatabaseExecutor.execute(() -> {
+                SQLiteHelper database = SQLiteHelper.getInstance(getApplicationContext().getApplicationContext());
+                database.deleteAllForecasts();
+            });
         } else if (s.equals(WeatherSyncScheduler.PREF_SYNC_INTERVAL_MINUTES)) {
             WeatherSyncScheduler.ensureScheduled(this, false);
         }

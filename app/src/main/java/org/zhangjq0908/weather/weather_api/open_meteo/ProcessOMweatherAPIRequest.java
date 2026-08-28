@@ -89,8 +89,7 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
                 }
             } else {
                 final String ERROR_MSG = context.getResources().getString(R.string.error_convert_to_json);
-                if (NavigationActivity.isVisible)
-                    Toast.makeText(context, ERROR_MSG, Toast.LENGTH_LONG).show();
+                showErrorToastOnMain(ERROR_MSG);
                 return;
             }
 
@@ -100,8 +99,7 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
 
                 if (weatherData == null) {
                     final String ERROR_MSG = context.getResources().getString(R.string.error_convert_to_json);
-                    if (NavigationActivity.isVisible)
-                        Toast.makeText(context, ERROR_MSG, Toast.LENGTH_LONG).show();
+                    showErrorToastOnMain(ERROR_MSG);
                     return;
                 } else {
                     weatherData.setCity_id(cityId);
@@ -128,8 +126,7 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
                     }
                 } else {
                     final String ERROR_MSG = context.getResources().getString(R.string.error_convert_to_json);
-                    if (NavigationActivity.isVisible)
-                        Toast.makeText(context, ERROR_MSG, Toast.LENGTH_LONG).show();
+                    showErrorToastOnMain(ERROR_MSG);
                     return;
                 }
             dbHelper.replaceForecasts(hourlyforecasts);
@@ -152,8 +149,7 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
                     }
                 } else {
                     final String ERROR_MSG = context.getResources().getString(R.string.error_convert_to_json);
-                    if (NavigationActivity.isVisible)
-                        Toast.makeText(context, ERROR_MSG, Toast.LENGTH_LONG).show();
+                    showErrorToastOnMain(ERROR_MSG);
                     return;
                 }
                 dbHelper.replaceQuarterHourlyForecasts(quarterHourlyForecasts);
@@ -167,8 +163,7 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
 
         } catch (JSONException e) {
             final String ERROR_MSG = context.getResources().getString(R.string.error_convert_to_json);
-            if (NavigationActivity.isVisible)
-                Toast.makeText(context, ERROR_MSG, Toast.LENGTH_LONG).show();
+            showErrorToastOnMain(ERROR_MSG);
         }
     }
 
@@ -230,6 +225,21 @@ public class ProcessOMweatherAPIRequest implements IProcessHttpRequest {
             @Override
             public void run() {
                 if (NavigationActivity.isVisible) Toast.makeText(context, context.getResources().getString(R.string.error_fetch_forecast), Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /**
+     * processSuccessScenario runs on a WorkManager background thread, where
+     * Toast.makeText().show() would throw "Can't create handler inside thread
+     * that has not called Looper.prepare()". Always dispatch to the main thread.
+     */
+    private void showErrorToastOnMain(final String message) {
+        Handler h = new Handler(this.context.getMainLooper());
+        h.post(new Runnable() {
+            @Override
+            public void run() {
+                if (NavigationActivity.isVisible) Toast.makeText(context, message, Toast.LENGTH_LONG).show();
             }
         });
     }

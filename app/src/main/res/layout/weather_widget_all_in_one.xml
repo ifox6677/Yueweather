@@ -179,6 +179,31 @@
         android:textSize="18dp"
         android:textStyle="bold" />
 
+    <LinearLayout
+        android:id="@+id/widget_date_layout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="2dp"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:background="@drawable/rounded_grey"
+        android:paddingLeft="7dp"
+        android:paddingRight="7dp"
+        android:paddingTop="1dp"
+        android:paddingBottom="1dp">
+
+        <TextView
+            android:id="@+id/widget_date_lunar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="七月十六"
+            android:textColor="@color/colorPrimaryDark"
+            android:textSize="16dp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
 
     <TextView
         android:id="@+id/widget_UVindex"

@@ -26,9 +26,6 @@ import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 import androidx.preference.PreferenceManager;
-import androidx.work.ExistingPeriodicWorkPolicy;
-import androidx.work.PeriodicWorkRequest;
-import androidx.work.WorkManager;
 
 import org.zhangjq0908.weather.R;
 import org.zhangjq0908.weather.activities.ForecastCityActivity;
@@ -38,8 +35,8 @@ import org.zhangjq0908.weather.database.HourlyForecast;
 import org.zhangjq0908.weather.database.QuarterHourlyForecast;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 import org.zhangjq0908.weather.database.WeekForecast;
+import org.zhangjq0908.weather.services.WeatherSyncScheduler;
 import org.zhangjq0908.weather.services.WeatherUpdateWorker;
-import org.zhangjq0908.weather.services.WidgetUpdater;
 import org.zhangjq0908.weather.ui.Help.StringFormatUtils;
 import org.zhangjq0908.weather.ui.UiResourceProvider;
 
@@ -48,15 +45,10 @@ import java.util.Calendar;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
-import java.util.concurrent.TimeUnit;
 
 public class WeatherWidgetAllInOne extends AppWidgetProvider {
     private static LocationListener locationListenerGPS;
     private LocationManager locationManager;
-    public static Bitmap radarBitmap;
-    public static long radarTimeGMT;
-    public static int radarZoom;
-
     public void updateAppWidget(Context context, final int appWidgetId) {
         SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
         SQLiteHelper db = SQLiteHelper.getInstance(context);
@@ -64,7 +56,12 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
 
             int cityID = getWidgetCityID(context);
             if(prefManager.getBoolean("pref_GPS", false) && !prefManager.getBoolean("pref_GPS_manual", false)) updateLocation(context, cityID,false);
-            WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
+            WeatherSyncScheduler.ensureScheduledGuarded(context.getApplicationContext());
+            if (WeatherSyncScheduler.isWidgetDataStale(context, 1.5)) {
+                WeatherUpdateWorker.enqueueCityUpdateForce(context, cityID);
+            } else {
+                WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
+            }
         }
     }
 
@@ -75,7 +72,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
 
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ) {
             LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-            Location locationGPS = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            Location locationGPS = locationManager.getLastKnownLocation(chooseProvider(context));
             if (locationGPS != null) {
                 CityToWatch city;
                 double lat = locationGPS.getLatitude();
@@ -85,7 +82,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
                         city = cities.get(i);
                         city.setLatitude((float) lat);
                         city.setLongitude((float) lon);
-                        city.setCityName(String.format(Locale.getDefault(),"%.2f° / %.2f°", lat, lon));
+                        city.setCityName(String.format(Locale.getDefault(),"%.2f\u00B0 / %.2f\u00B0", lat, lon));
                         db.updateCityToWatch(city);
 
                         break;
@@ -96,6 +93,18 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
             }
 
         }
+    }
+
+    /**
+     * GPS needs ACCESS_FINE_LOCATION; with only the approximate (COARSE) grant
+     * using GPS_PROVIDER throws SecurityException on Android 12+. Fall back to
+     * the network provider so widget location updates cannot crash the process.
+     */
+    private static String chooseProvider(Context context) {
+        boolean fineGranted = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (fineGranted && lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) return LocationManager.GPS_PROVIDER;
+        return LocationManager.NETWORK_PROVIDER;
     }
 
     public static void updateView(Context context, int appWidgetId) {
@@ -109,6 +118,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
         CurrentWeatherData weatherData = dbHelper.getCurrentWeatherByCityId(cityID);
         List<WeekForecast> weekforecasts = dbHelper.getWeekForecastsByCityId(cityID);
         List<HourlyForecast> hourlyforecasts = dbHelper.getForecastsByCityId(cityID);
+        if (weatherData == null || weekforecasts == null || weekforecasts.isEmpty()) return;  //no data yet - nothing to render
         long time = weatherData.getTimestamp();
         int zoneseconds = weatherData.getTimeZoneSeconds();
         int [] forecastIDs = {R.id.widget_hour12,R.id.widget_hour1, R.id.widget_hour2,R.id.widget_hour3,R.id.widget_hour4,R.id.widget_hour5,R.id.widget_hour6,R.id.widget_hour7, R.id.widget_hour8,R.id.widget_hour9,R.id.widget_hour10,R.id.widget_hour11};
@@ -118,7 +128,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
         long riseTime = (weatherData.getTimeSunrise() + zoneseconds) * 1000;
         long setTime = (weatherData.getTimeSunset() + zoneseconds) * 1000;
 
-        boolean isDay = weatherData.isDay(context);
+        boolean isDay = weatherData.isDay(context, city.getLatitude());
 
         if (!dbHelper.hasQuarterHourly(weatherData.getCity_id())){
             HourlyForecast nowCast = new HourlyForecast();
@@ -159,7 +169,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
                     } else count=0;                       //reset counter if quarter-hour with precipitation is found
                 }
                 if (nextWithoutPrecipitation!=null && (nextWithoutPrecipitation.getForecastTime()-System.currentTimeMillis()) <= 12* 60 * 60 * 1000)  {  //if rain stops within 12 hours show closed umbrella
-                    views.setTextViewText(R.id.widget_precipitation_forecast,"🌂 "+StringFormatUtils.formatTimeWithoutZone(context, nextWithoutPrecipitation.getLocalForecastTime(context)-15*60*1000)); //forecast is for preceding 15min
+                    views.setTextViewText(R.id.widget_precipitation_forecast,"\u2614 "+StringFormatUtils.formatTimeWithoutZone(context, nextWithoutPrecipitation.getLocalForecastTime(zoneseconds)-15*60*1000)); //forecast is for preceding 15min
                     views.setViewVisibility(R.id.widget_precipitation_forecast,View.VISIBLE);
                 }
             } else {
@@ -171,7 +181,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
                     }
                 }
                 if (nextPrecipitation!=null && (nextPrecipitation.getForecastTime()-System.currentTimeMillis()) <= 12* 60 * 60 * 1000)  {  //if rain starts within 12 hours show umbrella
-                    views.setTextViewText(R.id.widget_precipitation_forecast,"☔ "+StringFormatUtils.formatTimeWithoutZone(context, nextPrecipitation.getLocalForecastTime(context)-15*60*1000)); //forecast is for preceding 15min
+                    views.setTextViewText(R.id.widget_precipitation_forecast,"\u2614"+StringFormatUtils.formatTimeWithoutZone(context, nextPrecipitation.getLocalForecastTime(zoneseconds)-15*60*1000)); //forecast is for preceding 15min
                     views.setViewVisibility(R.id.widget_precipitation_forecast,View.VISIBLE);
                 }
             }
@@ -187,9 +197,11 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
         views.setTextViewText(R.id.widget_max_Temp,StringFormatUtils.formatTemperature(context, weekforecasts.get(0).getMaxTemperature()));
         views.setTextViewText(R.id.widget_min_Temp,StringFormatUtils.formatTemperature(context, weekforecasts.get(0).getMinTemperature()));
         views.setTextViewText(R.id.widget_city_name, city.getCityName());
+        long localNow = System.currentTimeMillis() + zoneseconds * 1000L;  //city-local date, same convention as sunrise/sunset
+views.setTextViewText(R.id.widget_date_lunar, StringFormatUtils.formatLunarDate(localNow));
         views.setInt(R.id.widget_background,"setAlpha", (int) ((100.0f - prefManager.getInt("pref_WidgetTransparency", 0)) * 255 / 100.0f));
 
-        if ((riseTime - setTime) % 86400 == 0) views.setTextViewText(R.id.widget_sunrise_sunset,"\u2600\u25b2 --:--" + " \u25bc --:--");
+        if ((riseTime - setTime) % 86400000L == 0) views.setTextViewText(R.id.widget_sunrise_sunset,"\u2600\u25b2 --:--" + " \u25bc --:--");
         else  {
             views.setTextViewText(R.id.widget_sunrise_sunset,"\u2600\u25b2\u2009" + StringFormatUtils.formatTimeWithoutZone(context, riseTime) + " \u25bc\u2009" + StringFormatUtils.formatTimeWithoutZone(context, setTime));
         }
@@ -218,7 +230,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
             for (int i=1;i<forecastIDs.length;i++){
                 Calendar forecastTime = Calendar.getInstance();
                 forecastTime.setTimeZone(TimeZone.getTimeZone("GMT"));
-                forecastTime.setTimeInMillis(hourlyforecasts.get(i).getLocalForecastTime(context));
+                forecastTime.setTimeInMillis(hourlyforecasts.get(i).getLocalForecastTime(zoneseconds));
                 int hour = forecastTime.get(Calendar.HOUR) % 12;
                 if ((weatherData.getTimeSunrise() - weatherData.getTimeSunset()) % 86400 == 0){
                     if ((dbHelper.getCityToWatch(hourlyforecasts.get(i).getCity_id()).getLatitude())>0){  //northern hemisphere
@@ -267,7 +279,18 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
                     isDayArray[i] = c.get(Calendar.DAY_OF_YEAR) < 80 || c.get(Calendar.DAY_OF_YEAR) > 265;
                 }
             } else {
-                isDayArray[i] = true;
+                //real sunrise/sunset available - judge day/night from that day's window
+                Calendar sunRise = Calendar.getInstance();
+                sunRise.setTimeZone(TimeZone.getTimeZone("GMT"));
+                sunRise.setTimeInMillis(currentWeather.getTimeSunrise() * 1000 + zonemilliseconds);
+                sunRise.set(Calendar.DAY_OF_YEAR, c.get(Calendar.DAY_OF_YEAR));
+                sunRise.set(Calendar.YEAR, c.get(Calendar.YEAR));
+                Calendar sunSet = Calendar.getInstance();
+                sunSet.setTimeZone(TimeZone.getTimeZone("GMT"));
+                sunSet.setTimeInMillis(currentWeather.getTimeSunset() * 1000 + zonemilliseconds);
+                sunSet.set(Calendar.DAY_OF_YEAR, c.get(Calendar.DAY_OF_YEAR));
+                sunSet.set(Calendar.YEAR, c.get(Calendar.YEAR));
+                isDayArray[i] = c.after(sunRise) && c.before(sunSet);
             }
 
             int day = c.get(Calendar.DAY_OF_WEEK);
@@ -327,7 +350,8 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
         }
         views.setOnClickPendingIntent(R.id.widget_layout, pendingIntent);
 
-        if (radarBitmap != null) views.setImageViewBitmap(R.id.widget_radar_view, WeatherUpdateWorker.prepareAllInOneWidget(context, city, radarZoom, radarTimeGMT + zoneseconds *1000L, radarBitmap));
+        RadarStore.LoadedRadar radar = RadarStore.load(context);
+        if (radar != null) views.setImageViewBitmap(R.id.widget_radar_view, WeatherUpdateWorker.prepareAllInOneWidget(context, city, radar.zoom, radar.timeGMT + zoneseconds *1000L, radar.bitmap));
 
         // Instruct the widget manager to update the widget
         appWidgetManager.updateAppWidget(appWidgetId, views);
@@ -341,14 +365,6 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
 
     @Override
     public void onUpdate(final Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
-        PeriodicWorkRequest widgetUpdateRequest =
-                new PeriodicWorkRequest.Builder(WidgetUpdater.class,
-                        20, TimeUnit.MINUTES)
-                        .build();
-        WorkManager
-                .getInstance(context)
-                .enqueueUniquePeriodicWork("widgetUpdateWork", ExistingPeriodicWorkPolicy.KEEP, widgetUpdateRequest);  //KEEP makes sure it is only initialized once
-
         SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
         if (locationManager==null) locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
 
@@ -382,7 +398,7 @@ public class WeatherWidgetAllInOne extends AppWidgetProvider {
                     }
                 };
                 Log.d("GPS", "Request Updates");
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 600000, 3000, locationListenerGPS);  //Update every 10 min, min distance 5km
+                locationManager.requestLocationUpdates(chooseProvider(context), 600000, 3000, locationListenerGPS);  //Update every 10 min, min distance 5km
             }
         }else {
             Log.d("GPS","Remove Updates");

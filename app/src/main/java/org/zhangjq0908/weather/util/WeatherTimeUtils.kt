@@ -9,7 +9,7 @@ object WeatherTimeUtils {
     /** True when sunrise equals sunset (or a full-day offset), i.e. polar day/night data. Times are Unix seconds. */
     @JvmStatic
     fun isPolarSun(timeSunriseSec: Long, timeSunsetSec: Long): Boolean {
-        return (timeSunriseSec - timeSunsetSec) % (24 * 60 * 60 * 1000L) == 0L
+        return (timeSunriseSec - timeSunsetSec) % (24 * 60 * 60L) == 0L
     }
 
     /**

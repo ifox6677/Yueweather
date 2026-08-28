@@ -15,3 +15,12 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+
+# WorkManager instantiates workers reflectively by class name stored in its
+# database, so they must not be renamed or stripped in release builds.
+# (work-runtime ships consumer rules for androidx.work internals, but the
+# app's own ListenableWorker subclasses are not guaranteed to be kept.)
+-keep public class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+

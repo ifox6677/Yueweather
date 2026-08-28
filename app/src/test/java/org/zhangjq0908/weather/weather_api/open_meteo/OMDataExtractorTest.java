@@ -71,11 +71,11 @@ public class OMDataExtractorTest {
     }
 
     @Test
-    public void hourlyForecastStopsAtNullWeatherCode() {
+    public void hourlyForecastSkipsNullWeatherCode() {
         List<HourlyForecast> list = extractor.extractHourlyForecast(hourlyPayload("null"));
 
         assertNotNull(list);
-        assertEquals(1, list.size());  //iteration breaks at the null entry
+        assertEquals(2, list.size());  //null slot is skipped, remaining entries are kept
     }
 
     @Test

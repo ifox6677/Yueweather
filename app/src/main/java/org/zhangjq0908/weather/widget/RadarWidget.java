@@ -26,29 +26,21 @@ import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 import androidx.preference.PreferenceManager;
-import androidx.work.ExistingPeriodicWorkPolicy;
-import androidx.work.PeriodicWorkRequest;
-import androidx.work.WorkManager;
 
 import org.zhangjq0908.weather.R;
 import org.zhangjq0908.weather.activities.RainViewerActivity;
 import org.zhangjq0908.weather.database.CityToWatch;
 import org.zhangjq0908.weather.database.CurrentWeatherData;
 import org.zhangjq0908.weather.database.SQLiteHelper;
+import org.zhangjq0908.weather.services.WeatherSyncScheduler;
 import org.zhangjq0908.weather.services.WeatherUpdateWorker;
-import org.zhangjq0908.weather.services.WidgetUpdater;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 
 public class RadarWidget extends AppWidgetProvider {
     private static LocationListener locationListenerGPS;
     private LocationManager locationManager;
-    public static Bitmap radarBitmap;
-    public static long radarTimeGMT;
-    public static int radarZoom;
-
     public void updateAppWidget(Context context, final int appWidgetId) {
         SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
         SQLiteHelper db = SQLiteHelper.getInstance(context);
@@ -56,7 +48,12 @@ public class RadarWidget extends AppWidgetProvider {
 
             int cityID = getWidgetCityID(context);
             if(prefManager.getBoolean("pref_GPS", false) && !prefManager.getBoolean("pref_GPS_manual", false)) updateLocation(context, cityID,false);
-            WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
+            WeatherSyncScheduler.ensureScheduledGuarded(context.getApplicationContext());
+            if (WeatherSyncScheduler.isWidgetDataStale(context, 1.5)) {
+                WeatherUpdateWorker.enqueueCityUpdateForce(context, cityID);
+            } else {
+                WeatherUpdateWorker.enqueueCityUpdate(context, cityID);
+            }
         }
     }
 
@@ -67,7 +64,7 @@ public class RadarWidget extends AppWidgetProvider {
 
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ) {
             LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-            Location locationGPS = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            Location locationGPS = locationManager.getLastKnownLocation(chooseProvider(context));
             if (locationGPS != null) {
                 CityToWatch city;
                 double lat = locationGPS.getLatitude();
@@ -86,10 +83,21 @@ public class RadarWidget extends AppWidgetProvider {
             } else {
                 if (manual) Toast.makeText(context.getApplicationContext(),R.string.error_no_position,Toast.LENGTH_SHORT).show(); //show toast only if manual update by refresh button
             }
+}
 
-        }
     }
 
+    /**
+     * GPS needs ACCESS_FINE_LOCATION; with only the approximate (COARSE) grant
+     * using GPS_PROVIDER throws SecurityException on Android 12+. Fall back to
+     * the network provider so widget location updates cannot crash the process.
+     */
+    private static String chooseProvider(Context context) {
+        boolean fineGranted = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (fineGranted && lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) return LocationManager.GPS_PROVIDER;
+        return LocationManager.NETWORK_PROVIDER;
+    }
 
     public static void updateView(Context context, int appWidgetId) {
 
@@ -136,7 +144,8 @@ public class RadarWidget extends AppWidgetProvider {
         }
         views.setOnClickPendingIntent(R.id.widget_layout, pendingIntent);
 
-        if (radarBitmap != null) views.setImageViewBitmap(R.id.widget_radar_view, WeatherUpdateWorker.prepareRadarWidget(context, city, radarZoom, radarTimeGMT + zoneseconds *1000L, radarBitmap));
+        RadarStore.LoadedRadar radar = RadarStore.load(context);
+        if (radar != null) views.setImageViewBitmap(R.id.widget_radar_view, WeatherUpdateWorker.prepareRadarWidget(context, city, radar.zoom, radar.timeGMT + zoneseconds *1000L, radar.bitmap));
 
         // Instruct the widget manager to update the widget
         appWidgetManager.updateAppWidget(appWidgetId, views);
@@ -150,14 +159,6 @@ public class RadarWidget extends AppWidgetProvider {
 
     @Override
     public void onUpdate(final Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
-        PeriodicWorkRequest widgetUpdateRequest =
-                new PeriodicWorkRequest.Builder(WidgetUpdater.class,
-                        20, TimeUnit.MINUTES)
-                        .build();
-        WorkManager
-                .getInstance(context)
-                .enqueueUniquePeriodicWork("widgetUpdateWork", ExistingPeriodicWorkPolicy.KEEP, widgetUpdateRequest);
-
         SharedPreferences prefManager = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
         if (locationManager==null) locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
 
@@ -191,7 +192,7 @@ public class RadarWidget extends AppWidgetProvider {
                     }
                 };
                 Log.d("GPS", "Request Updates");
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 600000, 3000, locationListenerGPS);  //Update every 10 min, min distance 5km
+                locationManager.requestLocationUpdates(chooseProvider(context), 600000, 3000, locationListenerGPS);  //Update every 10 min, min distance 5km
             }
         }else {
             Log.d("GPS","Remove Updates");

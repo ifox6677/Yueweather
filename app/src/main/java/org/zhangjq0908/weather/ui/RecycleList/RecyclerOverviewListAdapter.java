@@ -9,6 +9,7 @@ import android.view.ViewGroup;
 
 import org.zhangjq0908.weather.R;
 import org.zhangjq0908.weather.database.CityToWatch;
+import org.zhangjq0908.weather.database.DatabaseExecutor;
 import org.zhangjq0908.weather.database.SQLiteHelper;
 
 import java.util.Collections;
@@ -76,7 +77,8 @@ public class RecyclerOverviewListAdapter extends RecyclerView.Adapter<ItemViewHo
     public void onItemDismiss(int position) {
 
         CityToWatch city = cities.get(position);
-        database.deleteCityToWatch(city);
+        //DB write off the main thread; the in-memory list update stays on the UI thread
+        DatabaseExecutor.execute(() -> database.deleteCityToWatch(city));
         cities.remove(position);
         notifyItemRemoved(position);
     }
@@ -94,8 +96,10 @@ public class RecyclerOverviewListAdapter extends RecyclerView.Adapter<ItemViewHo
 
         fromCityToWatch.setRank(toRank);
         toCityToWatch.setRank(fromRank);
-        database.updateCityToWatch(fromCityToWatch);
-        database.updateCityToWatch(toCityToWatch);
+        DatabaseExecutor.execute(() -> {
+            database.updateCityToWatch(fromCityToWatch);
+            database.updateCityToWatch(toCityToWatch);
+        });
         Collections.swap(cities, fromPosition, toPosition);
         notifyItemMoved(fromPosition, toPosition);
 
@@ -109,7 +113,7 @@ public class RecyclerOverviewListAdapter extends RecyclerView.Adapter<ItemViewHo
     public void renameCity(int position, String s) {
         CityToWatch cityToWatch = cities.get(position);
         cityToWatch.setCityName(s);
-        database.updateCityToWatch(cityToWatch);
+        DatabaseExecutor.execute(() -> database.updateCityToWatch(cityToWatch));
         notifyItemChanged(position);
     }
 }
