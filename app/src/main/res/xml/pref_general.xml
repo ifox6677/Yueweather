@@ -30,10 +30,19 @@
             android:defaultValue="false"
             />
 
+        <ListPreference
+            app:useSimpleSummaryProvider="true"
+            android:defaultValue="30"
+            android:entries="@array/syncIntervalArray"
+            android:entryValues="@array/syncIntervalValues"
+            android:key="pref_sync_interval_minutes"
+            android:title="@string/settings_update_interval"
+            android:summary="@string/settings_interval_summary" />
+
         <SeekBarPreference
             android:key="pref_number_days"
             android:title="@string/settings_forecast_days"
-            android:max="16"
+            android:max="15"
             android:defaultValue="8"
             app:showSeekBarValue="true"
             />
@@ -74,6 +83,12 @@
         <SwitchPreference
             android:key="pref_showPressure"
             android:title="@string/settings_show_pressure"
+            android:defaultValue="false"
+            />
+
+        <SwitchPreference
+            android:key="pref_showHourlyUvIndex"
+            android:title="@string/settings_show_hourly_uv_index"
             android:defaultValue="false"
             />
 

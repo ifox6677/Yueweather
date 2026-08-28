@@ -4,7 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:layoutDirection="ltr"
-    tools:context=".activities.RainViewerActivity"
+    android:fitsSystemWindows="true"
+    tools:context="org.zhangjq0908.weather.activities.RainViewerActivity"
     android:orientation="vertical">
 
     <include layout="@layout/toolbar" />
@@ -74,8 +75,8 @@
             android:paddingHorizontal="7dp"
             android:layout_alignParentBottom="true"
             android:textColor="@color/colorAccent"
+            android:singleLine="true"
             android:alpha="0.65"
             android:background="@color/white" />
     </RelativeLayout>
-
 </LinearLayout>
