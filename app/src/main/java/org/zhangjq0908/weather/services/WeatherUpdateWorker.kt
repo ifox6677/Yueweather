@@ -19,17 +19,20 @@ import androidx.preference.PreferenceManager
 import androidx.work.*
 import com.android.volley.DefaultRetryPolicy
 import com.android.volley.Request
+import com.android.volley.Response
 import com.android.volley.toolbox.ImageRequest
 import com.android.volley.toolbox.JsonObjectRequest
-import com.android.volley.toolbox.RequestFuture
 import com.android.volley.toolbox.StringRequest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import kotlinx.coroutines.withTimeout
 import org.zhangjq0908.weather.R
 import org.zhangjq0908.weather.activities.NavigationActivity
 import org.zhangjq0908.weather.database.CityToWatch
-import org.zhangjq0908.weather.database.CurrentWeatherData
 import org.zhangjq0908.weather.database.SQLiteHelper
 import org.zhangjq0908.weather.http.VolleySingleton
 import org.zhangjq0908.weather.ui.Help.StringFormatUtils
@@ -131,10 +134,11 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
                 val api = OMHttpRequestForWeatherAPI(context)
                 val url = api.getUrlForQueryingOMweatherAPI(context, city.latitude, city.longitude)
 
-                val future = RequestFuture.newFuture<String>()
-                val request = StringRequest(Request.Method.GET, url, future, future)
-                VolleySingleton.get(context).add(request)
-                val response = await(request, future)
+                val response = await { success, error ->
+                    StringRequest(Request.Method.GET, url, success, error).apply {
+                        retryPolicy = DefaultRetryPolicy(10_000, 2, 1.0f)
+                    }
+                }
 
                 // success path — DB + widget update inside processSuccessScenario
                 ProcessOMweatherAPIRequest(context).processSuccessScenario(response, city.cityId)
@@ -148,20 +152,16 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
                 updateRadarIfNeeded(context, city.cityId)
             }
             Result.success()
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            Log.e(TAG, "Weather update interrupted for city ${city.cityId}", e)
-            //stopped/cancelled - the next periodic fan-out or refresh re-triggers it
-            Result.failure()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Weather update failed for city ${city.cityId}", e)
             showToastIfVisible(context, context.getString(R.string.error_fetch_forecast))
-            // temporary failure → retry with exponential backoff (diagram)
             Result.retry()
         }
     }
 
-    private fun updateRadarIfNeeded(context: Context, cityId: Int) {
+    private suspend fun updateRadarIfNeeded(context: Context, cityId: Int) {
         val appWidgetManager = AppWidgetManager.getInstance(context)
         val numRadarWidgets =
             appWidgetManager.getAppWidgetIds(ComponentName(context, RadarWidget::class.java)).size
@@ -177,13 +177,13 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
         val city = db.getCityToWatch(cityId) ?: return
 
         try {
-            val jsonFuture = RequestFuture.newFuture<JSONObject>()
-            val jsonRequest = JsonObjectRequest(
-                Request.Method.GET, "https://api.rainviewer.com/public/weather-maps.json", null, jsonFuture, jsonFuture
-            )
-            jsonRequest.retryPolicy = DefaultRetryPolicy(3000, 1, 1.0f)
-            VolleySingleton.get(context).add(jsonRequest)
-            val response = await(jsonRequest, jsonFuture)
+            val response = await { success, error ->
+                JsonObjectRequest(
+                    Request.Method.GET, "https://api.rainviewer.com/public/weather-maps.json", null, success, error
+                ).apply {
+                    retryPolicy = DefaultRetryPolicy(3000, 1, 1.0f)
+                }
+            }
 
             val host = response.getString("host")
             val pastFrames = response.getJSONObject("radar").getJSONArray("past")
@@ -194,14 +194,14 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
             val zoom = 7
             val radarUrl = host + path + "/256/" + zoom + "/" + city.latitude + "/" + city.longitude + "/2/1_1.png"
 
-            val imageFuture = RequestFuture.newFuture<Bitmap>()
-            val imageRequest = ImageRequest(
-                radarUrl, imageFuture,
-                0, 0, ImageView.ScaleType.CENTER_CROP, Bitmap.Config.RGB_565, imageFuture
-            )
-            imageRequest.retryPolicy = DefaultRetryPolicy(3000, 1, 1.0f)
-            VolleySingleton.get(context).add(imageRequest)
-            val radarBitmap = await(imageRequest, imageFuture)
+            val radarBitmap = await { success, error ->
+                ImageRequest(
+                    radarUrl, success,
+                    0, 0, ImageView.ScaleType.CENTER_CROP, Bitmap.Config.RGB_565, error
+                ).apply {
+                    retryPolicy = DefaultRetryPolicy(3000, 1, 1.0f)
+                }
+            }
 
             //persist to cache instead of holding the bitmap in process memory
             RadarStore.save(context, radarBitmap, radarTimeGMT, zoom)
@@ -228,9 +228,9 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
                 )
                 appWidgetManager.partiallyUpdateAppWidget(widgetIDs, views)
             }
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            Log.e(TAG, "Radar update interrupted", e)
+        } catch (e: CancellationException) {
+            //worker stopped - propagate so the work is cancelled, not retried
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Radar update failed", e)  //radar failure must not fail the weather job
         }
@@ -243,24 +243,31 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
     }
 
     /**
-     * Waits for a Volley RequestFuture in 1s slices so a stopped worker reacts
-     * within about a second instead of blocking up to REQUEST_TIMEOUT_SECONDS
-     * while occupying a WorkManager executor thread. On stop the underlying
-     * Volley request is cancelled so no bandwidth is wasted on a dropped
-     * response.
+     * Suspends until the Volley request built by [build] completes, resuming
+     * with the parsed response or the Volley error. Unlike the old
+     * RequestFuture 1s polling loop this holds no worker thread while waiting;
+     * on timeout or worker stop the coroutine is cancelled and the underlying
+     * Volley request is cancelled too, so no bandwidth is wasted.
      */
-    private fun <T> await(request: Request<T>, future: RequestFuture<T>): T {
-        val deadline = SystemClock.elapsedRealtime() + REQUEST_TIMEOUT_SECONDS * 1000L
-        while (true) {
-            if (isStopped) {
-                request.cancel()
-                throw InterruptedException("worker stopped")
+    private suspend fun <T> await(build: (Response.Listener<T>, Response.ErrorListener) -> Request<T>): T {
+        val deferred = CompletableDeferred<T>()
+        val request = build(
+            Response.Listener { deferred.complete(it) },
+            Response.ErrorListener { deferred.completeExceptionally(it) }
+        )
+        //cancel the underlying Volley request when the coroutine (and thus the
+        //worker) is stopped/cancelled, so no bandwidth is wasted on a dropped response
+        coroutineContext[Job]?.invokeOnCompletion { request.cancel() }
+        try {
+            return withTimeout(REQUEST_TIMEOUT_SECONDS * 1000L) {
+                VolleySingleton.get(applicationContext).add(request)
+                deferred.await()
             }
-            try {
-                return future.get(1000L, TimeUnit.MILLISECONDS)
-            } catch (e: TimeoutException) {
-                if (SystemClock.elapsedRealtime() >= deadline) throw e
-            }
+        } catch (e: TimeoutCancellationException) {
+            //cancel the request and convert to a normal exception so
+            //updateWeatherData retries instead of treating it as a worker stop
+            request.cancel()
+            throw TimeoutException("request timed out after $REQUEST_TIMEOUT_SECONDS s")
         }
     }
 
@@ -307,7 +314,7 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
         @JvmName("enqueueCityUpdateForce")
         fun enqueueCityUpdateForce(context: Context, cityId: Int) {
             if (!allowEnqueue(context, cityId, FORCED_DEBOUNCE_MS, "pref_last_forced_enqueue_")) return
-            enqueueCityInternal(context, cityId)
+            enqueueCityInternal(context, cityId, expedited = true)
         }
 
         private fun allowEnqueue(context: Context, cityId: Int, debounceMs: Long, keyPrefix: String): Boolean {
@@ -326,20 +333,24 @@ class WeatherUpdateWorker(context: Context, params: WorkerParameters) : Coroutin
          * Single KEEP-guarded enqueuer that both PeriodicWork (正常唤醒) and
          * WidgetWork/Watchdog converge on. Unique name weatherSyncCity-{id}.
          */
-        private fun enqueueCityInternal(context: Context, cityId: Int) {
+        private fun enqueueCityInternal(context: Context, cityId: Int, expedited: Boolean = false) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
             val input = Data.Builder()
                 .putInt(KEY_CITY_ID, cityId)
                 .build()
-            val request = OneTimeWorkRequest.Builder(WeatherUpdateWorker::class.java)
+            val builder = OneTimeWorkRequest.Builder(WeatherUpdateWorker::class.java)
                 .setConstraints(constraints)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
                 .setInputData(input)
-                .build()
+            if (expedited) {
+                //user-triggered / watchdog force refresh - run ASAP, falling back
+                //to a regular queued work if the expedited quota is exhausted
+                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            }
             WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(UNIQUE_WORK_NAME_PREFIX + cityId, ExistingWorkPolicy.KEEP, request)
+                .enqueueUniqueWork(UNIQUE_WORK_NAME_PREFIX + cityId, ExistingWorkPolicy.KEEP, builder.build())
         }
 
         /**
